@@ -81,6 +81,8 @@ public:
 
     void commit(const commitmanager::SnapshotDescriptor& snapshot);
 
+    crossbow::string readDirectory(crossbow::string& tag);
+
     Table createTable(const crossbow::string& name, Schema schema);
 
     std::shared_ptr<GetTablesResponse> getTables();
@@ -141,6 +143,8 @@ public:
     std::unique_ptr<commitmanager::SnapshotDescriptor> start(crossbow::infinio::Fiber& fiber, TransactionType type);
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
+
+    crossbow::string readDirectory(crossbow::infinio::Fiber& fiber, crossbow::string& tag);
 
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
 
