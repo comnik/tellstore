@@ -56,7 +56,7 @@ void ClientHandle::commit(const commitmanager::SnapshotDescriptor& snapshot) {
 }
 
     crossbow::string ClientHandle::readDirectory(crossbow::string &tag) {
-        mProcessor.readDirectory(mFiber, tag);
+        return mProcessor.readDirectory(mFiber, tag);
     }
 
 Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
