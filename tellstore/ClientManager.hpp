@@ -206,8 +206,14 @@ private:
      * @brief The socket associated with the shard for the given table and key
      */
     store::ClientSocket* shard(uint64_t key) {
-        uint32_t node_id = mNodeRing->getNode(key);
-        return mTellStoreSocket.at(node_id).get();
+        // TODO Change getNode to return a uint32_t directly, 
+        // if we definitely don't need to store any other node information in the ring.
+        uint32_t* node_id = mNodeRing->getNode(key);
+        if (node_id != nullptr) {
+            return mTellStoreSocket.at(*node_id).get();
+        } else {
+            // no cluster information available
+        }
     }
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
@@ -216,6 +222,8 @@ private:
     std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
     std::unique_ptr<store::HashRing<uint32_t>> mNodeRing;
+
+    std::atomic<Future*>;
 
     uint64_t mProcessorNum;
 
