@@ -28,6 +28,7 @@
 #include <tellstore/ScanMemory.hpp>
 #include <tellstore/Table.hpp>
 #include <tellstore/TransactionType.hpp>
+#include <tellstore/HashRing.hpp>
 
 #include <commitmanager/ClientSocket.hpp>
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -187,8 +188,10 @@ public:
             const char* query);
 
 protected:
-    BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
-            uint64_t processorNum);
+    BaseClientProcessor(crossbow::infinio::InfinibandService& service,
+                        const ClientConfig& config,
+                        uint64_t processorNum)
+        : mNodeRing(new HashRing<uint32_t>(NUM_VIRT_NODES));
 
     ~BaseClientProcessor() = default;
 
@@ -203,13 +206,16 @@ private:
      * @brief The socket associated with the shard for the given table and key
      */
     store::ClientSocket* shard(uint64_t key) {
-        return mTellStoreSocket.at(key % mTellStoreSocket.size()).get();
+        uint32_t node_id = mNodeRing->getNode(key);
+        return mTellStoreSocket.at(node_id).get();
     }
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
     commitmanager::ClientSocket mCommitManagerSocket;
     std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
+
+    std::unique_ptr<store::HashRing<uint32_t>> mNodeRing;
 
     uint64_t mProcessorNum;
 
