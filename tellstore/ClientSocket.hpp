@@ -35,6 +35,7 @@
 #include <crossbow/string.hpp>
 
 #include <sparsehash/dense_hash_map>
+#include <boost/variant.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -51,6 +52,34 @@ namespace store {
 class AbstractTuple;
 class ClientSocket;
 class ScanIterator;
+
+/**
+* @brief Response wrapper that encpasulates a possible cluster status request,
+*        if the local cluster configuration is missing.
+*/
+template <class ResponseType>
+class ClusterResponse final {
+public:
+    using RequestClosure = std::function<ResponseType()>;
+
+    ClusterResponse(crossbow::infinio::Fiber& fiber, ResponseType resp) : mFuture(resp) {}
+    ClusterResponse(crossbow::infinio::Fiber& fiber, RequestClosure req) : mFuture(req) {}
+
+    ResponseType get () { return boost::apply_visitor(future_visitor(), mFuture); }
+
+private:
+    class future_visitor : public boost::static_visitor<ResponseType> {
+    public:
+        ResponseType operator () (ResponseType resp) const { return resp; }
+
+        ResponseType operator () (RequestClosure req) const {
+            // we don't have a result yet
+            req->waitForResult();
+        }
+    };
+
+    boost::variant<ResponseType, RequestClosure> mFuture;
+};
 
 /**
  * @brief Response for a Create-Table request
@@ -126,8 +155,8 @@ private:
 /**
  * @brief Response for a Get request
  */
-class GetResponse final : public crossbow::infinio::RpcResponseResult<GetResponse, std::unique_ptr<Tuple>> {
-    using Base = crossbow::infinio::RpcResponseResult<GetResponse, std::unique_ptr<Tuple>>;
+class GetResponse_t final : public crossbow::infinio::RpcResponseResult<GetResponse_t, std::unique_ptr<Tuple>> {
+    using Base = crossbow::infinio::RpcResponseResult<GetResponse_t, std::unique_ptr<Tuple>>;
 
 public:
     using Base::Base;
@@ -143,6 +172,8 @@ private:
 
     void processResponse(crossbow::buffer_reader& message);
 };
+
+using GetResponse = ClusterResponse<GetResponse_t>;
 
 /**
  * @brief Response for a Modificatoin (insert, update, remove, revert) request
