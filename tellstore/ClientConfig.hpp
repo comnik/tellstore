@@ -42,7 +42,8 @@ struct ClientConfig {
     ClientConfig()
             : maxPendingResponses(48ull),
               maxBatchSize(16ull),
-              numNetworkThreads(2ull) {
+              numNetworkThreads(2ull),
+              numVirtualNodes(200) {
         infinibandConfig.receiveBufferCount = 256;
         infinibandConfig.sendBufferCount = 256;
         infinibandConfig.bufferLength = 128 * 1024;
@@ -67,6 +68,9 @@ struct ClientConfig {
 
     /// Number of network threads to process transactions on
     size_t numNetworkThreads;
+
+    /// Number of virtual nodes assigned to each node in the hash ring
+    size_t numVirtualNodes;
 };
 
 std::vector<crossbow::infinio::Endpoint> ClientConfig::parseTellStore(const crossbow::string& host) {

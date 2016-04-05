@@ -155,8 +155,8 @@ private:
 /**
  * @brief Response for a Get request
  */
-class GetResponse_t final : public crossbow::infinio::RpcResponseResult<GetResponse_t, std::unique_ptr<Tuple>> {
-    using Base = crossbow::infinio::RpcResponseResult<GetResponse_t, std::unique_ptr<Tuple>>;
+class GetResponse final : public crossbow::infinio::RpcResponseResult<GetResponse, std::unique_ptr<Tuple>> {
+    using Base = crossbow::infinio::RpcResponseResult<GetResponse, std::unique_ptr<Tuple>>;
 
 public:
     using Base::Base;
@@ -173,7 +173,7 @@ private:
     void processResponse(crossbow::buffer_reader& message);
 };
 
-using GetResponse = ClusterResponse<GetResponse_t>;
+// using GetResponse = ClusterResponse<GetResponse>;
 
 /**
  * @brief Response for a Modificatoin (insert, update, remove, revert) request

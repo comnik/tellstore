@@ -33,7 +33,7 @@ namespace store {
     template <class Node>
     class HashRing {
         public:
-            HashRing(unsigned int num_vnodes) : num_vnodes(num_vnodes), 
+            HashRing(size_t num_vnodes) : num_vnodes(num_vnodes),
                                                 hash_fn(std::hash<std::string>()) {}
             
             size_t insertNode(const std::string& nodeName, const Node& node);
@@ -41,7 +41,7 @@ namespace store {
             const Node* getNode(uint64_t key);
 
         private:
-            const unsigned int num_vnodes;
+            const size_t num_vnodes;
             std::hash<std::string> hash_fn;
             std::map<size_t, Node> node_ring;
     };
@@ -59,7 +59,7 @@ namespace store {
     template <class Node>
     void HashRing<Node>::removeNode(const std::string& nodeName) {
         size_t hash;
-        for (uint32_t vnode = 0; vnode < num_vnodes; vnode++) {
+        for (size_t vnode = 0; vnode < num_vnodes; vnode++) {
             hash = hash_fn(std::to_string(vnode) + nodeName);
             node_ring.erase(hash);
         }

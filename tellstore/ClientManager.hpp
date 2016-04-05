@@ -157,9 +157,26 @@ public:
         return mTellStoreSocket.at(0)->getTable(fiber, name);
     }
 
-    std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ClusterResponse<GetResponse>> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(key)->get(fiber, tableId, key, snapshot);
+        // Try to get a node for this request
+        auto node = shard(key);
+
+        if (node == nullptr) {
+            // Cluster information is not available
+            // Remember what we wanted to do
+            auto req = [this, &fiber, tableId, key, &snapshot] () {
+                // TODO: What do we do here, if cluster information still not available for some reason?
+                auto node = shard(key);
+                return node->get(fiber, tableId, key, snapshot);
+            };
+
+            // Let the ClusterResponse perform a cluster state request first, retry afterwards
+            return std::make_shared<ClusterResponse<GetResponse>>(fiber, req);
+        } else {
+            // Fast path, return a proper GetResponse immediately
+            return std::make_shared<ClusterResponse<GetResponse>>(fiber, node->get(fiber, tableId, key, snapshot));
+        }
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
@@ -190,8 +207,9 @@ public:
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service,
                         const ClientConfig& config,
-                        uint64_t processorNum)
-        : mNodeRing(new HashRing<uint32_t>(NUM_VIRT_NODES));
+                        uint64_t processorNum) {
+        auto mNodeRing(new HashRing<uint32_t>(config.numVirtualNodes));
+    }
 
     ~BaseClientProcessor() = default;
 
@@ -206,13 +224,13 @@ private:
      * @brief The socket associated with the shard for the given table and key
      */
     store::ClientSocket* shard(uint64_t key) {
-        // TODO Change getNode to return a uint32_t directly, 
-        // if we definitely don't need to store any other node information in the ring.
-        uint32_t* node_id = mNodeRing->getNode(key);
+        // TODO Change getNode to return a uint32_t directly if we definitely don't need to store any other node information in the ring.
+        const uint32_t* node_id = mNodeRing->getNode(key);
         if (node_id != nullptr) {
             return mTellStoreSocket.at(*node_id).get();
         } else {
             // no cluster information available
+            return nullptr;
         }
     }
 
@@ -223,7 +241,7 @@ private:
 
     std::unique_ptr<store::HashRing<uint32_t>> mNodeRing;
 
-    std::atomic<Future*>;
+    std::atomic<tell::commitmanager::ClusterStateResponse*> pendingClusterStateReq;
 
     uint64_t mProcessorNum;
 
