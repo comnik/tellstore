@@ -45,6 +45,16 @@ void writeSnapshot(crossbow::buffer_writer& message, const commitmanager::Snapsh
 
 } // anonymous namespace
 
+template<class ResponseType>
+std::shared_ptr<ResponseType> ClusterResponse<ResponseType>::get () {
+    if (this->mFuture.which() == 1) {
+        // First we have to wait for the cluster state request to finish
+        this->mStatusResponse->waitForResult();
+    }
+
+    return boost::apply_visitor(ClusterResponse::future_visitor(), this->mFuture);
+}
+
 void CreateTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
     setResult(tableId);

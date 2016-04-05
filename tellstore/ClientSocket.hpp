@@ -68,13 +68,15 @@ public:
                     RequestClosure req) : mFuture(req),
                                           mStatusResponse(statusResp) {}
 
-    std::shared_ptr<ResponseType> get () {
+    std::shared_ptr<ResponseType> get ();
+    /*std::shared_ptr<ResponseType> get () {
         if (mFuture.which() == 1) {
             // First we have to wait for the cluster state request to finish
-            // TODO mStatusResponse->....
+            mStatusResponse->waitForResult();
         }
+
         return boost::apply_visitor(future_visitor(), mFuture);
-    }
+    }*/
 
 private:
     class future_visitor : public boost::static_visitor<std::shared_ptr<ResponseType>> {
