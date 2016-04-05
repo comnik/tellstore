@@ -75,14 +75,17 @@ std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key)
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
-    return mProcessor.get(mFiber, table.tableId(), key, *snapshot);
+
+    auto clusterResponse = mProcessor.get(mFiber, table.tableId(), key, *snapshot);
+    return clusterResponse->get();
 }
 
 std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key,
         const commitmanager::SnapshotDescriptor& snapshot) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.get(mFiber, table.tableId(), key, snapshot);
+    auto clusterResponse = mProcessor.get(mFiber, table.tableId(), key, snapshot);
+    return clusterResponse->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key, uint64_t version,

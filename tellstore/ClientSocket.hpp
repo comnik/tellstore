@@ -45,6 +45,7 @@
 namespace tell {
 namespace commitmanager {
 class SnapshotDescriptor;
+class ClusterStateResponse;
 } // namespace commitmanager
 
 namespace store {
@@ -60,25 +61,34 @@ class ScanIterator;
 template <class ResponseType>
 class ClusterResponse final {
 public:
-    using RequestClosure = std::function<ResponseType()>;
+    using RequestClosure = std::function<std::shared_ptr<ResponseType>()>;
 
-    ClusterResponse(crossbow::infinio::Fiber& fiber, ResponseType resp) : mFuture(resp) {}
-    ClusterResponse(crossbow::infinio::Fiber& fiber, RequestClosure req) : mFuture(req) {}
+    ClusterResponse(std::shared_ptr<ResponseType> resp) : mFuture(resp) {}
+    ClusterResponse(std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
+                    RequestClosure req) : mFuture(req),
+                                          mStatusResponse(statusResp) {}
 
-    ResponseType get () { return boost::apply_visitor(future_visitor(), mFuture); }
+    std::shared_ptr<ResponseType> get () {
+        if (mFuture.which() == 1) {
+            // First we have to wait for the cluster state request to finish
+            // TODO mStatusResponse->....
+        }
+        return boost::apply_visitor(future_visitor(), mFuture);
+    }
 
 private:
-    class future_visitor : public boost::static_visitor<ResponseType> {
+    class future_visitor : public boost::static_visitor<std::shared_ptr<ResponseType>> {
     public:
-        ResponseType operator () (ResponseType resp) const { return resp; }
+        std::shared_ptr<ResponseType> operator () (std::shared_ptr<ResponseType> resp) const { return resp; }
 
-        ResponseType operator () (RequestClosure req) const {
-            // we don't have a result yet
-            req->waitForResult();
+        std::shared_ptr<ResponseType> operator () (RequestClosure req) const {
+            // Retry the original request
+            return req();
         }
     };
 
-    boost::variant<ResponseType, RequestClosure> mFuture;
+    boost::variant<std::shared_ptr<ResponseType>, RequestClosure> mFuture;
+    std::shared_ptr<commitmanager::ClusterStateResponse> mStatusResponse;
 };
 
 /**

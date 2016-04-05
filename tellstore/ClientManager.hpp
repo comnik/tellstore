@@ -165,17 +165,31 @@ public:
         if (node == nullptr) {
             // Cluster information is not available
             // Remember what we wanted to do
-            auto req = [this, &fiber, tableId, key, &snapshot] () {
+            auto req = [this, &fiber, tableId, key, &snapshot] () -> std::shared_ptr<GetResponse> {
                 // TODO: What do we do here, if cluster information still not available for some reason?
                 auto node = shard(key);
                 return node->get(fiber, tableId, key, snapshot);
             };
 
+            // Perform the ClusterStatusRequest
+            // std::shared_ptr<commitmanager::ClusterStateResponse> statusResp;
+            // if (mRequestIsPending.test_and_set()) {
+                // We are the first thread to perform the request
+                auto statusResp = mCommitManagerSocket.readDirectory(fiber, "STORAGE");
+                // mPendingClusterStatusReq.store(statusResp.get());
+            // } else {
+                // There is a already a request pending
+                // TODO Continue here. Somehow we have to be sure mPendingClusterStatusReq is already set.
+                // while (mPendingClusterStatusReq)
+                // statusResp = std::make_shared<commitmanager::ClusterStateResponse>(mPendingClusterStatusReq.load());
+            // }
+
             // Let the ClusterResponse perform a cluster state request first, retry afterwards
-            return std::make_shared<ClusterResponse<GetResponse>>(fiber, req);
+            return std::make_shared<ClusterResponse<GetResponse>>(statusResp, req);
         } else {
             // Fast path, return a proper GetResponse immediately
-            return std::make_shared<ClusterResponse<GetResponse>>(fiber, node->get(fiber, tableId, key, snapshot));
+            auto getResponse = node->get(fiber, tableId, key, snapshot);
+            return std::make_shared<ClusterResponse<GetResponse>>(getResponse);
         }
     }
 
@@ -241,7 +255,8 @@ private:
 
     std::unique_ptr<store::HashRing<uint32_t>> mNodeRing;
 
-    std::atomic<tell::commitmanager::ClusterStateResponse*> pendingClusterStateReq;
+    std::atomic_flag mRequestIsPending = ATOMIC_FLAG_INIT;
+    std::atomic<tell::commitmanager::ClusterStateResponse*> mPendingClusterStatusReq;
 
     uint64_t mProcessorNum;
 
