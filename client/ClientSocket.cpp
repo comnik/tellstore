@@ -25,6 +25,7 @@
 #include <tellstore/AbstractTuple.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
+#include <commitmanager/ClientSocket.hpp>
 
 #include <crossbow/alignment.hpp>
 #include <crossbow/infinio/Endpoint.hpp>
@@ -453,6 +454,8 @@ void ClientSocket::scanProgress(uint16_t scanId, std::shared_ptr<ScanResponse> r
         message.write<size_t>(offset);
     });
 }
+
+template class ClusterResponse<GetResponse>;
 
 } // namespace store
 } // namespace tell

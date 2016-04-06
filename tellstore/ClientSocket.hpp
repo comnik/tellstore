@@ -376,5 +376,7 @@ public:
     }
 };
 
+extern template class ClusterResponse<GetResponse>;
+
 } // namespace store
 } // namespace tell
