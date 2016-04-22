@@ -82,8 +82,6 @@ public:
 
     void commit(const commitmanager::SnapshotDescriptor& snapshot);
 
-    crossbow::string readDirectory(crossbow::string& tag);
-
     Table createTable(const crossbow::string& name, Schema schema);
 
     std::shared_ptr<GetTablesResponse> getTables();
@@ -145,8 +143,6 @@ public:
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
-    crossbow::string readDirectory(crossbow::infinio::Fiber& fiber, crossbow::string& tag);
-
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
 
     std::shared_ptr<GetTablesResponse> getTables(crossbow::infinio::Fiber& fiber) {
@@ -175,7 +171,7 @@ public:
             // std::shared_ptr<commitmanager::ClusterStateResponse> statusResp;
             // if (mRequestIsPending.test_and_set()) {
                 // We are the first thread to perform the request
-                auto statusResp = mCommitManagerSocket.readDirectory(fiber, "STORAGE");
+                auto statusResp = mCommitManagerSocket.registerNode(fiber, "@TODO", "STORAGE");
                 // mPendingClusterStatusReq.store(statusResp.get());
             // } else {
                 // There is a already a request pending
@@ -219,11 +215,11 @@ public:
             const char* query);
 
 protected:
-    BaseClientProcessor(crossbow::infinio::InfinibandService& service,
-                        const ClientConfig& config,
-                        uint64_t processorNum) {
-        auto mNodeRing(new HashRing<uint32_t>(config.numVirtualNodes));
-    }
+    BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
+                        uint64_t processorNum);
+    // {
+        // auto mNodeRing(new HashRing<uint32_t>(config.numVirtualNodes));
+    // }
 
     ~BaseClientProcessor() = default;
 

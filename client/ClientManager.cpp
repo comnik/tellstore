@@ -55,10 +55,6 @@ void ClientHandle::commit(const commitmanager::SnapshotDescriptor& snapshot) {
     mProcessor.commit(mFiber, snapshot);
 }
 
-    crossbow::string ClientHandle::readDirectory(crossbow::string &tag) {
-        return mProcessor.readDirectory(mFiber, tag);
-    }
-
 Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
     return mProcessor.createTable(mFiber, name, std::move(schema));
 }
@@ -215,11 +211,6 @@ void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitma
         throw std::runtime_error("Commit transaction did not succeed");
     }
 }
-
-    crossbow::string BaseClientProcessor::readDirectory(crossbow::infinio::Fiber &fiber, crossbow::string &tag) {
-        auto directoryEntryResponse = mCommitManagerSocket.readDirectory(fiber, tag);
-        return directoryEntryResponse->get();
-    }
 
 Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {
     // TODO Return a combined createTable future?
