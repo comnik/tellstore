@@ -26,22 +26,30 @@
 
 #include <util/StorageConfig.hpp>
 
+#include <commitmanager/ClientSocket.hpp>
+
 #include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
 #include <crossbow/program_options.hpp>
+#include <crossbow/string.hpp>
 
 #include <iostream>
 
 int main(int argc, const char** argv) {
     tell::store::StorageConfig storageConfig;
     tell::store::ServerConfig serverConfig;
+
+    // Host to register at
+    crossbow::string directoryHost;
+    
     bool help = false;
     crossbow::string logLevel("DEBUG");
 
     auto opts = crossbow::program_options::create_options(argv[0],
             crossbow::program_options::value<'h'>("help", &help),
             crossbow::program_options::value<'l'>("log-level", &logLevel),
+            crossbow::program_options::value<'d'>("directory", &directoryHost),
             crossbow::program_options::value<'p'>("port", &serverConfig.port),
             crossbow::program_options::value<'m'>("memory", &storageConfig.totalMemory),
             crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity),
@@ -76,6 +84,7 @@ int main(int argc, const char** argv) {
 
     LOG_INFO("Starting TellStore server");
     LOG_INFO("--- Backend: %1%", tell::store::Storage::implementationName());
+    LOG_INFO("--- Directory: %1%", directoryHost);
     LOG_INFO("--- Port: %1%", serverConfig.port);
     LOG_INFO("--- Network Threads: %1%", serverConfig.numNetworkThreads);
     LOG_INFO("--- GC Interval: %1%s", storageConfig.gcInterval);
@@ -89,8 +98,26 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initialize storage");
     tell::store::Storage storage(storageConfig);
 
-    LOG_INFO("Initialize network server");
+    LOG_INFO("Initialize network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
+
+    LOG_INFO("Register with cluster directory");
+    std::unique_ptr<crossbow::infinio::InfinibandProcessor> processor = service.createProcessor();
+    tell::commitmanager::ClientSocket commitManagerSocket(service.createSocket(*processor));
+
+    crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
+    commitManagerSocket.connect(endpoint);
+
+    processor->executeFiber([&commitManagerSocket] (crossbow::infinio::Fiber& fiber) {
+        auto registerResponse = commitManagerSocket.registerNode(fiber, "somenode:8080", "STORAGE");
+        if (!registerResponse->waitForResult()) {
+            auto& ec = registerResponse->error();
+            LOG_INFO("Error while registering [error = %1% %2%]", ec, ec.message());
+            return;
+        }
+    });
+
+    LOG_INFO("Initialize network server");
     tell::store::ServerManager server(service, storage, serverConfig);
     service.run();
 

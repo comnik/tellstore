@@ -18,6 +18,9 @@ macro(add_tellstored _name _implementation)
     add_executable(tellstored-${_name} main.cpp ${SERVER_SRCS} ${SERVER_PRIVATE_HDR})
     target_compile_definitions(tellstored-${_name} PRIVATE ${ARGN})
 
+    # Link against Commitmanager library
+    target_link_libraries(tellstored-${_name} PRIVATE commitmanager-client)
+
     # Link against TellStore library
     target_link_libraries(tellstored-${_name} PRIVATE tellstore-${_implementation} tellstore-common)
 
