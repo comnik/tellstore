@@ -40,6 +40,8 @@ int main(int argc, const char** argv) {
     tell::store::StorageConfig storageConfig;
     tell::store::ServerConfig serverConfig;
 
+    // ib0 address
+    crossbow::string ib0addr;
     // Host to register at
     crossbow::string directoryHost;
     
@@ -50,6 +52,7 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'h'>("help", &help),
             crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'d'>("directory", &directoryHost),
+            crossbow::program_options::value<'a'>("host", &ib0addr),
             crossbow::program_options::value<'p'>("port", &serverConfig.port),
             crossbow::program_options::value<'m'>("memory", &storageConfig.totalMemory),
             crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity),
@@ -85,6 +88,7 @@ int main(int argc, const char** argv) {
     LOG_INFO("Starting TellStore server");
     LOG_INFO("--- Backend: %1%", tell::store::Storage::implementationName());
     LOG_INFO("--- Directory: %1%", directoryHost);
+    LOG_INFO("--- Host: %1%", ib0addr);
     LOG_INFO("--- Port: %1%", serverConfig.port);
     LOG_INFO("--- Network Threads: %1%", serverConfig.numNetworkThreads);
     LOG_INFO("--- GC Interval: %1%s", storageConfig.gcInterval);
@@ -108,8 +112,8 @@ int main(int argc, const char** argv) {
     crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
     commitManagerSocket.connect(endpoint);
 
-    processor->executeFiber([&commitManagerSocket] (crossbow::infinio::Fiber& fiber) {
-        auto registerResponse = commitManagerSocket.registerNode(fiber, "somenode:8080", "STORAGE");
+    processor->executeFiber([&ib0addr, &commitManagerSocket] (crossbow::infinio::Fiber& fiber) {
+        auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
         if (!registerResponse->waitForResult()) {
             auto& ec = registerResponse->error();
             LOG_INFO("Error while registering [error = %1% %2%]", ec, ec.message());
