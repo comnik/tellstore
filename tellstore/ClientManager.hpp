@@ -215,11 +215,9 @@ public:
             const char* query);
 
 protected:
-    BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
+    BaseClientProcessor(crossbow::infinio::InfinibandService& service,
+                        const ClientConfig& config,
                         uint64_t processorNum);
-    // {
-        // auto mNodeRing(new HashRing<uint32_t>(config.numVirtualNodes));
-    // }
 
     ~BaseClientProcessor() = default;
 
@@ -234,10 +232,10 @@ private:
      * @brief The socket associated with the shard for the given table and key
      */
     store::ClientSocket* shard(uint64_t key) {
-        // TODO Change getNode to return a uint32_t directly if we definitely don't need to store any other node information in the ring.
-        const uint32_t* node_id = mNodeRing->getNode(key);
-        if (node_id != nullptr) {
-            return mTellStoreSocket.at(*node_id).get();
+        // TODO Change getNode to return a size_t directly if we definitely don't need to store any other node information in the ring.
+        const size_t* nodeId = mNodeRing.getNode(key);
+        if (nodeId != nullptr) {
+            return mTellStoreSocket.at(*nodeId).get();
         } else {
             // no cluster information available
             return nullptr;
@@ -249,7 +247,7 @@ private:
     commitmanager::ClientSocket mCommitManagerSocket;
     std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
-    std::unique_ptr<store::HashRing<uint32_t>> mNodeRing;
+    store::HashRing<size_t> mNodeRing;
 
     std::atomic_flag mRequestIsPending = ATOMIC_FLAG_INIT;
     std::atomic<tell::commitmanager::ClusterStateResponse*> mPendingClusterStatusReq;

@@ -172,6 +172,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
         uint64_t processorNum)
         : mProcessor(service.createProcessor()),
           mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses, config.maxBatchSize),
+          mNodeRing(config.numVirtualNodes),
           mProcessorNum(processorNum),
           mScanId(0u) {
     mCommitManagerSocket.connect(config.commitManager);
@@ -181,6 +182,10 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
         mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), config.maxPendingResponses,
                 config.maxBatchSize));
         mTellStoreSocket.back()->connect(ep, mProcessorNum);
+
+        LOG_INFO("Inserting node %1% into hash ring", ep);
+        size_t idx = mTellStoreSocket.size() - 1;
+        mNodeRing.insertNode("node", idx);
     }
 }
 

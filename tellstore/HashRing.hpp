@@ -34,7 +34,7 @@ namespace store {
     class HashRing {
         public:
             HashRing(size_t num_vnodes) : num_vnodes(num_vnodes),
-                                                hash_fn(std::hash<std::string>()) {}
+                                          hash_fn(std::hash<std::string>()) {}
             
             size_t insertNode(const std::string& nodeName, const Node& node);
             void removeNode(const std::string& nodeName);
