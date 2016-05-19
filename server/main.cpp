@@ -119,6 +119,52 @@ int main(int argc, const char** argv) {
             LOG_INFO("Error while registering [error = %1% %2%]", ec, ec.message());
             return;
         }
+
+        // We registered successfully. This means, the commit manager should have 
+        // responded with key ranges we are now responsible for. We have to
+        // request these ranges from their current owners and then notify the commit manager that we now control them.
+
+        // For this, we treat the set of current owners we need to contact, as a new cluster.
+        ClientConfig ownersConfig;
+        for (auto& range : ranges) {
+            LOG_INFO("Will request range [%1%, %2%] from %3%...", range->start, range->end, range->owner);
+            ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range->owner);
+        }
+
+        ClientManager<void> ownersManager(&ownersConfig);
+
+        // Now we perform a scan for all the ranges.
+        ownersManager.execute([](ClientHandle& client) {
+            LOG_INFO("Initiating scan...");
+        
+            auto& fiber = client.fiber();
+            auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+
+            Record::id_t recordField;
+            if (!mTable.record().idOf("number", recordField)) {
+                LOG_ERROR("number field not found");
+                return;
+            }
+
+            uint32_t selectionLength = 32;
+            std::unique_ptr<char[]> selection(new char[selectionLength]);
+
+            crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+            selectionWriter.write<uint32_t>(0x1u); // Number of columns
+            selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+            selectionWriter.write<uint16_t>(0x0u); // Partition shift
+            selectionWriter.write<uint32_t>(0x0u); // Partition key
+            selectionWriter.write<uint32_t>(0x0u); // Partition value
+            selectionWriter.write<uint16_t>(recordField);
+            selectionWriter.write<uint16_t>(0x1u);
+            selectionWriter.align(sizeof(uint64_t));
+            selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+            selectionWriter.write<uint8_t>(0x0u);
+            selectionWriter.align(sizeof(uint32_t));
+            selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+  
+            client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+        });
     });
 
     LOG_INFO("Initialize network server");

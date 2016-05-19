@@ -176,7 +176,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
           mProcessorNum(processorNum),
           mScanId(0u) {
     mCommitManagerSocket.connect(config.commitManager);
-
+    
     mTellStoreSocket.reserve(config.tellStore.size());
     for (auto& ep : config.tellStore) {
         mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), config.maxPendingResponses,

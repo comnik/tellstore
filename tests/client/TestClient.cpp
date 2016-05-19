@@ -624,6 +624,23 @@ int main(int argc, const char** argv) {
     }
 
     clientConfig.commitManager = ClientConfig::parseCommitManager(commitManagerHost);
+
+    // Fetch initial cluster information
+    // std::unique_ptr<crossbow::infinio::InfinibandProcessor> processor = service.createProcessor();
+    // tell::commitmanager::ClientSocket commitManagerSocket(service.createSocket(*processor));
+
+    // crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
+    // commitManagerSocket.connect(endpoint);
+
+    // processor->executeFiber([&ib0addr, &commitManagerSocket] (crossbow::infinio::Fiber& fiber) {
+    //     auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
+    //     if (!registerResponse->waitForResult()) {
+    //         auto& ec = registerResponse->error();
+    //         LOG_INFO("Error while registering [error = %1% %2%]", ec, ec.message());
+    //         return;
+    //     }
+    // });
+
     clientConfig.tellStore = ClientConfig::parseTellStore(tellStoreHost);
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
