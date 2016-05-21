@@ -44,6 +44,12 @@ struct Partition {
     const crossbow::string owner;
     uint64_t start;
     uint64_t end;
+
+    Partition(crossbow::string owner, uint64_t start, uint64_t end) :
+                owner(owner),
+                start(start),
+                end(end)
+                {}
 };
 
 int main(int argc, const char** argv) {
@@ -122,7 +128,7 @@ int main(int argc, const char** argv) {
     crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
     commitManagerSocket.connect(endpoint);
 
-    processor->executeFiber([&ib0addr, &commitManagerSocket] (crossbow::infinio::Fiber& fiber) {
+    processor->executeFiber([&ib0addr, &commitManagerSocket, &directoryHost] (crossbow::infinio::Fiber& fiber) {
         auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
         if (!registerResponse->waitForResult()) {
             auto& ec = registerResponse->error();
@@ -131,52 +137,60 @@ int main(int argc, const char** argv) {
         }
 
         std::unique_ptr<std::vector<Partition>> ranges(new std::vector<Partition>());
+        ranges->emplace_back("192.168.0.14:7243", 1, 50);
 
         // We registered successfully. This means, the commit manager should have 
         // responded with key ranges we are now responsible for. We have to
         // request these ranges from their current owners and then notify the commit manager that we now control them.
 
         // For this, we treat the set of current owners we need to contact, as a new cluster.
-        const tell::store::ClientConfig ownersConfig;
+        tell::store::ClientConfig ownersConfig;
         for (auto range : *ranges) {
-            LOG_INFO("Will request range [%1%, %2%] from %3%...", range.start, range.end, range.owner);
-            // ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
+            if (range.owner == ib0addr) {
+                LOG_INFO("This node is the first owner of range [%1%, %2%]", range.start, range.end);
+            } else {
+                LOG_INFO("Will request range [%1%, %2%] from %3%...", range.start, range.end, range.owner);
+                ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
+            }
         }
 
-        tell::store::ClientManager<void> ownersManager(ownersConfig);
+        if (ownersConfig.tellStore.size()) {
+            ownersConfig.commitManager = tell::store::ClientConfig::parseCommitManager(directoryHost);
+            tell::store::ClientManager<void> ownersManager(ownersConfig);
 
-        // Now we perform a scan for all the ranges.
-        ownersManager.execute([](tell::store::ClientHandle& client) {
-            LOG_INFO("Initiating scan...");
-        
-            // auto& fiber = client.fiber();
-            // auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+            // Now we perform a scan for all the ranges.
+            ownersManager.execute([](tell::store::ClientHandle& client) {
+                LOG_INFO("Initiating scan...");
+            
+                // auto& fiber = client.fiber();
+                // auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
 
-            // Record::id_t recordField;
-            // if (!mTable.record().idOf("number", recordField)) {
-            //     LOG_ERROR("number field not found");
-            //     return;
-            // }
+                // Record::id_t recordField;
+                // if (!mTable.record().idOf("number", recordField)) {
+                //     LOG_ERROR("number field not found");
+                //     return;
+                // }
 
-            // uint32_t selectionLength = 32;
-            // std::unique_ptr<char[]> selection(new char[selectionLength]);
+                // uint32_t selectionLength = 32;
+                // std::unique_ptr<char[]> selection(new char[selectionLength]);
 
-            // crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-            // selectionWriter.write<uint32_t>(0x1u); // Number of columns
-            // selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
-            // selectionWriter.write<uint16_t>(0x0u); // Partition shift
-            // selectionWriter.write<uint32_t>(0x0u); // Partition key
-            // selectionWriter.write<uint32_t>(0x0u); // Partition value
-            // selectionWriter.write<uint16_t>(recordField);
-            // selectionWriter.write<uint16_t>(0x1u);
-            // selectionWriter.align(sizeof(uint64_t));
-            // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
-            // selectionWriter.write<uint8_t>(0x0u);
-            // selectionWriter.align(sizeof(uint32_t));
-            // selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
-  
-            // client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
-        });
+                // crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+                // selectionWriter.write<uint32_t>(0x1u); // Number of columns
+                // selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+                // selectionWriter.write<uint16_t>(0x0u); // Partition shift
+                // selectionWriter.write<uint32_t>(0x0u); // Partition key
+                // selectionWriter.write<uint32_t>(0x0u); // Partition value
+                // selectionWriter.write<uint16_t>(recordField);
+                // selectionWriter.write<uint16_t>(0x1u);
+                // selectionWriter.align(sizeof(uint64_t));
+                // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+                // selectionWriter.write<uint8_t>(0x0u);
+                // selectionWriter.align(sizeof(uint32_t));
+                // selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+      
+                // client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+            });
+        }
     });
 
     LOG_INFO("Initialize network server");
