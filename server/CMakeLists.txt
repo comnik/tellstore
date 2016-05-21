@@ -21,6 +21,9 @@ macro(add_tellstored _name _implementation)
     # Link against Commitmanager library
     target_link_libraries(tellstored-${_name} PRIVATE commitmanager-client)
 
+    # Link against TellStore client library (so tellstore nodes can send partitions to each other)
+    target_link_libraries(tellstored-${_name} PRIVATE tellstore-client)
+
     # Link against TellStore library
     target_link_libraries(tellstored-${_name} PRIVATE tellstore-${_implementation} tellstore-common)
 
