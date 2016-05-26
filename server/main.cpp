@@ -165,14 +165,14 @@ int main(int argc, const char** argv) {
     }
 
     if (ownersConfig.tellStore.size() > 0) {
-        LOG_INFO("We have to fetch some keys");
         ownersConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
         ClientManager<void> ownersManager(ownersConfig);
 
-        LOG_INFO("About to start the scan");
-
+        size_t scanMemoryLength = 0x80000000ull;
+        std::unique_ptr<ScanMemoryManager> scanMemory(ownersManager.allocateScanMemory(ownersConfig.tellStore.size(), scanMemoryLength / ownersConfig.tellStore.size()));
+        
         // Now we perform a scan for all the ranges.
-        TransactionRunner::executeBlocking(ownersManager, [](ClientHandle& client) {
+        TransactionRunner::executeBlocking(ownersManager, [&scanMemory](ClientHandle& client) {
             LOG_INFO("Initiating scan...");
         
             auto& fiber = client.fiber();
@@ -194,14 +194,14 @@ int main(int argc, const char** argv) {
             size_t i = 0;
             crossbow::string text1 = crossbow::string("Sometext");
             crossbow::string text2 = crossbow::string("Moretext");
-            auto tuple = GenericTuple({
+            auto testTuple = GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
                 std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
                 std::make_pair<crossbow::string, boost::any>("text1", text1),
                 std::make_pair<crossbow::string, boost::any>("text2", text2)
             });
             
-            auto insertFuture = client.insert(mTable, 1, *snapshot, tuple);
+            auto insertFuture = client.insert(mTable, 1, *snapshot, testTuple);
             if (auto ec = insertFuture->error()) {
                 LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
                 return;
@@ -209,30 +209,63 @@ int main(int argc, const char** argv) {
                 LOG_INFO("Inserted tuple.");
             }
 
-            // Record::id_t recordField;
-            // if (!mTable.record().idOf("number", recordField)) {
-            //     LOG_ERROR("number field not found");
-            //     return;
-            // }
+            Record::id_t recordField;
+            if (!mTable.record().idOf("number", recordField)) {
+                LOG_ERROR("number field not found");
+                return;
+            }
 
-            // uint32_t selectionLength = 32;
-            // std::unique_ptr<char[]> selection(new char[selectionLength]);
+            uint32_t selectionLength = 32;
+            std::unique_ptr<char[]> selection(new char[selectionLength]);
 
-            // crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-            // selectionWriter.write<uint32_t>(0x1u); // Number of columns
-            // selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
-            // selectionWriter.write<uint16_t>(0x0u); // Partition shift
-            // selectionWriter.write<uint32_t>(0x0u); // Partition key
-            // selectionWriter.write<uint32_t>(0x0u); // Partition value
-            // selectionWriter.write<uint16_t>(recordField);
-            // selectionWriter.write<uint16_t>(0x1u);
-            // selectionWriter.align(sizeof(uint64_t));
-            // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
-            // selectionWriter.write<uint8_t>(0x0u);
-            // selectionWriter.align(sizeof(uint32_t));
-            // selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+            crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+            selectionWriter.write<uint32_t>(0x1u); // Number of columns
+            selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+            selectionWriter.write<uint16_t>(0x0u); // Partition shift
+            selectionWriter.write<uint32_t>(0x0u); // Partition key
+            selectionWriter.write<uint32_t>(0x0u); // Partition value
+            selectionWriter.write<uint16_t>(recordField);
+            selectionWriter.write<uint16_t>(0x1u);
+            selectionWriter.align(sizeof(uint64_t));
+            selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+            selectionWriter.write<uint8_t>(0x0u);
+            selectionWriter.align(sizeof(uint32_t));
+            selectionWriter.write<int32_t>(0x0u); // the whole range I guess
   
-            // client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+            auto scanStartTime = std::chrono::steady_clock::now();    
+            auto scanIterator = client.scan(mTable, *snapshot, *scanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+
+            size_t scanCount = 0x0u;
+            size_t scanDataSize = 0x0u;
+            while (scanIterator->hasNext()) {
+                uint64_t key;
+                const char* tuple;
+                size_t tupleLength;
+                std::tie(key, tuple, tupleLength) = scanIterator->next();
+                ++scanCount;
+                scanDataSize += tupleLength;
+
+                auto text1Value = mTable.field<crossbow::string>("text1", tuple);
+                LOG_INFO("Got tuple with text %1%", text1Value);
+            }
+            auto scanEndTime = std::chrono::steady_clock::now();
+
+            if (scanIterator->error()) {
+                auto& ec = scanIterator->error();
+                LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+                return;
+            }
+
+            LOG_INFO("Committing transaction");
+            client.commit(*snapshot);
+
+            auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
+            auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
+            auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
+                    std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
+            auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
+            LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
+                    snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
         });
     }
 
