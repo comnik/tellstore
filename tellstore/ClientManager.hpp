@@ -238,6 +238,7 @@ private:
             return mTellStoreSocket.at(*nodeId).get();
         } else {
             // no cluster information available
+            LOG_INFO("No cluster information available!");
             return nullptr;
         }
     }
@@ -358,10 +359,13 @@ ClientManager<Context>::ClientManager(const ClientConfig& config, Args... contex
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
     }
+
+    LOG_INFO("Succesfully started client manager");
 }
 
 template<typename Context>
 ClientManager<Context>::~ClientManager() {
+    LOG_INFO("Destroying client manager");
     shutdown();
     mServiceThread.detach();
 }

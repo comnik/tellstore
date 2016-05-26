@@ -26,6 +26,8 @@
 
 #include <tellstore/ClientConfig.hpp>
 #include <tellstore/ClientManager.hpp>
+#include <tellstore/TransactionRunner.hpp>
+#include <tellstore/GenericTuple.hpp>
 
 #include <util/StorageConfig.hpp>
 
@@ -38,6 +40,8 @@
 #include <crossbow/string.hpp>
 
 #include <iostream>
+
+using namespace tell::store;
 
 // Struct describing a partition [start, end] and the responsible node
 struct Partition {
@@ -53,8 +57,8 @@ struct Partition {
 };
 
 int main(int argc, const char** argv) {
-    tell::store::StorageConfig storageConfig;
-    tell::store::ServerConfig serverConfig;
+    StorageConfig storageConfig;
+    ServerConfig serverConfig;
 
     // ib0 address
     crossbow::string ib0addr;
@@ -102,7 +106,7 @@ int main(int argc, const char** argv) {
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore server");
-    LOG_INFO("--- Backend: %1%", tell::store::Storage::implementationName());
+    LOG_INFO("--- Backend: %1%", Storage::implementationName());
     LOG_INFO("--- Directory: %1%", directoryHost);
     LOG_INFO("--- Host: %1%", ib0addr);
     LOG_INFO("--- Port: %1%", serverConfig.port);
@@ -116,7 +120,7 @@ int main(int argc, const char** argv) {
     crossbow::allocator::init();
 
     LOG_INFO("Initialize storage");
-    tell::store::Storage storage(storageConfig);
+    Storage storage(storageConfig);
 
     LOG_INFO("Initialize network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
@@ -137,14 +141,14 @@ int main(int argc, const char** argv) {
         }
 
         std::unique_ptr<std::vector<Partition>> ranges(new std::vector<Partition>());
-        ranges->emplace_back("192.168.0.14:7243", 1, 50);
+        ranges->emplace_back("localhost:7243", 1, 50);
 
         // We registered successfully. This means, the commit manager should have 
         // responded with key ranges we are now responsible for. We have to
         // request these ranges from their current owners and then notify the commit manager that we now control them.
 
         // For this, we treat the set of current owners we need to contact, as a new cluster.
-        tell::store::ClientConfig ownersConfig;
+        ClientConfig ownersConfig;
         for (auto range : *ranges) {
             if (range.owner == ib0addr) {
                 LOG_INFO("This node is the first owner of range [%1%, %2%]", range.start, range.end);
@@ -153,48 +157,87 @@ int main(int argc, const char** argv) {
                 ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
             }
         }
-
-        if (ownersConfig.tellStore.size()) {
-            ownersConfig.commitManager = tell::store::ClientConfig::parseCommitManager(directoryHost);
-            tell::store::ClientManager<void> ownersManager(ownersConfig);
-
-            // Now we perform a scan for all the ranges.
-            ownersManager.execute([](tell::store::ClientHandle& client) {
-                LOG_INFO("Initiating scan...");
-            
-                // auto& fiber = client.fiber();
-                // auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
-
-                // Record::id_t recordField;
-                // if (!mTable.record().idOf("number", recordField)) {
-                //     LOG_ERROR("number field not found");
-                //     return;
-                // }
-
-                // uint32_t selectionLength = 32;
-                // std::unique_ptr<char[]> selection(new char[selectionLength]);
-
-                // crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-                // selectionWriter.write<uint32_t>(0x1u); // Number of columns
-                // selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
-                // selectionWriter.write<uint16_t>(0x0u); // Partition shift
-                // selectionWriter.write<uint32_t>(0x0u); // Partition key
-                // selectionWriter.write<uint32_t>(0x0u); // Partition value
-                // selectionWriter.write<uint16_t>(recordField);
-                // selectionWriter.write<uint16_t>(0x1u);
-                // selectionWriter.align(sizeof(uint64_t));
-                // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
-                // selectionWriter.write<uint8_t>(0x0u);
-                // selectionWriter.align(sizeof(uint32_t));
-                // selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
-      
-                // client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
-            });
-        }
     });
 
+    ClientConfig ownersConfig;
+    if ("localhost:7243" != ib0addr) {
+        ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), "localhost:7243");
+    }
+
+    if (ownersConfig.tellStore.size() > 0) {
+        LOG_INFO("We have to fetch some keys");
+        ownersConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
+        ClientManager<void> ownersManager(ownersConfig);
+
+        LOG_INFO("About to start the scan");
+
+        // Now we perform a scan for all the ranges.
+        TransactionRunner::executeBlocking(ownersManager, [](ClientHandle& client) {
+            LOG_INFO("Initiating scan...");
+        
+            auto& fiber = client.fiber();
+            auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+
+            // Populate with some dummy data
+
+            LOG_INFO("Adding table");
+            Schema schema(TableType::TRANSACTIONAL);
+            schema.addField(FieldType::INT, "number", true);
+            schema.addField(FieldType::BIGINT, "largenumber", true);
+            schema.addField(FieldType::TEXT, "text1", true);
+            schema.addField(FieldType::TEXT, "text2", true);
+
+            Table mTable = client.createTable("testTable", schema);
+            LOG_INFO("Added 'testTable'");
+
+            int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
+            size_t i = 0;
+            crossbow::string text1 = crossbow::string("Sometext");
+            crossbow::string text2 = crossbow::string("Moretext");
+            auto tuple = GenericTuple({
+                std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
+                std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                std::make_pair<crossbow::string, boost::any>("text1", text1),
+                std::make_pair<crossbow::string, boost::any>("text2", text2)
+            });
+            
+            auto insertFuture = client.insert(mTable, 1, *snapshot, tuple);
+            if (auto ec = insertFuture->error()) {
+                LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
+                return;
+            } else {
+                LOG_INFO("Inserted tuple.");
+            }
+
+            // Record::id_t recordField;
+            // if (!mTable.record().idOf("number", recordField)) {
+            //     LOG_ERROR("number field not found");
+            //     return;
+            // }
+
+            // uint32_t selectionLength = 32;
+            // std::unique_ptr<char[]> selection(new char[selectionLength]);
+
+            // crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+            // selectionWriter.write<uint32_t>(0x1u); // Number of columns
+            // selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+            // selectionWriter.write<uint16_t>(0x0u); // Partition shift
+            // selectionWriter.write<uint32_t>(0x0u); // Partition key
+            // selectionWriter.write<uint32_t>(0x0u); // Partition value
+            // selectionWriter.write<uint16_t>(recordField);
+            // selectionWriter.write<uint16_t>(0x1u);
+            // selectionWriter.align(sizeof(uint64_t));
+            // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+            // selectionWriter.write<uint8_t>(0x0u);
+            // selectionWriter.align(sizeof(uint32_t));
+            // selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+  
+            // client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+        });
+    }
+
     LOG_INFO("Initialize network server");
-    tell::store::ServerManager server(service, storage, serverConfig);
+    ServerManager server(service, storage, serverConfig);
     service.run();
 
     LOG_INFO("Exiting TellStore server");

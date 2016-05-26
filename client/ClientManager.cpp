@@ -185,7 +185,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
 
         LOG_INFO("Inserting node %1% into hash ring", ep);
         size_t idx = mTellStoreSocket.size() - 1;
-        mNodeRing.insertNode("node", idx);
+        mNodeRing.insertNode("node", idx); // @TODO
     }
 }
 
