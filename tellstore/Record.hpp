@@ -417,6 +417,8 @@ struct FieldMetaData {
     uint16_t nullIdx;
 };
 
+const auto INTERNAL_KEY_FIELD_METADATA = std::make_shared<struct FieldMetaData>();
+
 /**
 * This class implements the physical representation of a tuple.
 * Note that this class does not handle multiple versions for
@@ -508,7 +510,11 @@ public:
     }
 
     const FieldMetaData& getFieldMeta(id_t id) const {
-        return mFieldMetaData.at(id);
+        if (id == -1) {
+            return INTERNAL_KEY_FIELD_METADATA.get();
+        } else {
+            return mFieldMetaData.at(id);
+        }
     }
 
     bool allNotNull() const {
