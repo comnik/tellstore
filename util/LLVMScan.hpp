@@ -111,6 +111,7 @@ struct FieldAST {
     uint16_t nullIdx;
 
     bool needsValue;
+    bool isInternal;
     bool isFixedSize;
 
     uint32_t offset;

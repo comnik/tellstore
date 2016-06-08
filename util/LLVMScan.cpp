@@ -106,6 +106,7 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
 
     std::unordered_map<QueryDataHolder, size_t> queryCache;
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        LOG_DEBUG("Accessing next query");
         auto q = mQueries[i];
 
         crossbow::buffer_reader queryReader(q->selection(), q->selectionLength());
@@ -151,20 +152,40 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
             // Add a new FieldAST if the field does not yet exist
             auto iter = mScanAst.fields.find(currentColumn);
             if (iter == mScanAst.fields.end()) {
-                auto& fieldMeta = mRecord.getFieldMeta(currentColumn);
-                auto& field = fieldMeta.field;
-
                 FieldAST fieldAst;
-                fieldAst.id = currentColumn;
-                fieldAst.isNotNull = field.isNotNull();
-                fieldAst.nullIdx = (field.isNotNull() ? 0 : fieldMeta.nullIdx);
-                fieldAst.isFixedSize = field.isFixedSized();
-                fieldAst.type = field.type();
-                fieldAst.offset = fieldMeta.offset;
-                fieldAst.alignment = field.alignOf();
-                fieldAst.size = field.staticSize();
 
-                mScanAst.needsNull |= !field.isNotNull();
+                if (currentColumn == INTERNAL_KEY_FIELD_ID) {
+                    // Client wants to perform a scan on the internal tell key
+
+                    LOG_DEBUG("Scan on internal tell key detected");
+
+                    fieldAst.id          = INTERNAL_KEY_FIELD_ID;
+                    fieldAst.isNotNull   = true;
+                    fieldAst.nullIdx     = 0;
+                    fieldAst.isFixedSize = true;
+                    fieldAst.isInternal  = true;
+                    fieldAst.type        = FieldType::BIGINT;
+                    fieldAst.size        = sizeof(int64_t);
+
+                } else {
+                    LOG_DEBUG("Scan on regular field detected");
+
+                    auto& fieldMeta = mRecord.getFieldMeta(currentColumn);
+                    auto& field = fieldMeta.field;
+
+                    fieldAst.id          = currentColumn;
+                    fieldAst.isNotNull   = field.isNotNull();
+                    fieldAst.nullIdx     = (field.isNotNull() ? 0 : fieldMeta.nullIdx);
+                    fieldAst.isFixedSize = field.isFixedSized();
+                    fieldAst.type        = field.type();
+                    fieldAst.offset      = fieldMeta.offset;
+                    fieldAst.alignment   = field.alignOf();
+                    fieldAst.size        = field.staticSize();
+
+                    mScanAst.needsNull |= !field.isNotNull();
+                }
+
+                LOG_DEBUG("Inserting new field node...");
 
                 auto res = mScanAst.fields.emplace(currentColumn, std::move(fieldAst));
                 LOG_ASSERT(res.second, "Field already in map");
@@ -174,6 +195,8 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
 
             // Iterate over all predicates on the field
             for (decltype(numPredicates) j = 0; j < numPredicates; ++j) {
+                LOG_DEBUG("Parsing predicate %1%", j);
+
                 auto predicateType = queryReader.read<PredicateType>();
                 auto conjunct = queryAst.conjunctOffset + queryReader.read<uint8_t>();
                 ++mScanAst.conjunctProperties[conjunct].predicateCount;
@@ -201,6 +224,7 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     } break;
 
                     case FieldType::BIGINT: {
+                        LOG_DEBUG("Getting int64_t value for predicate");
                         queryReader.advance(6);
                         predicateAst.fixed.value = builder.getInt64(queryReader.read<int64_t>());
                         predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
@@ -246,13 +270,16 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     } break;
                     }
                 }
+                LOG_DEBUG("Inserting new predicate node");
                 fieldAst.predicates.emplace_back(std::move(predicateAst));
             }
         }
 
         mScanAst.numConjunct += queryAst.numConjunct;
+        LOG_DEBUG("Inserting new query node");
         mScanAst.queries.emplace_back(std::move(queryAst));
     }
+    LOG_DEBUG("Done.");
     LOG_ASSERT(mScanAst.queries.size() == mQueries.size(), "Did not process every query");
     LOG_ASSERT(mScanAst.conjunctProperties.size() == mScanAst.numConjunct, "Number of conjuncts does not match");
 }
@@ -344,6 +371,7 @@ void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom
         uint32_t length) {
     LOG_ASSERT(mResult.size() >= mNumConjuncts, "Result array must be larger or equal than number of conjuncts");
 
+    LOG_INFO("Performing scan on key %1%", key);
     mRowScanFun(key, validFrom, validTo, data, &mResult.front());
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {

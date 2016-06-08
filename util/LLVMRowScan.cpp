@@ -66,7 +66,10 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
         // Load the field value from the record
         llvm::Value* lhs = nullptr;
         llvm::Value* length = nullptr;
-        if (fieldAst.needsValue) {
+        if (fieldAst.isInternal) {
+            LOG_DEBUG("Scanning on internal field!");
+            lhs = getParam(key);
+        } else if (fieldAst.needsValue) {
             lhs = getParam(recordData);
             if (fieldAst.offset != 0) {
                 lhs = CreateInBoundsGEP(lhs, getInt64(fieldAst.offset));

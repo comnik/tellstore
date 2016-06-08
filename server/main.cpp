@@ -191,7 +191,7 @@ int main(int argc, const char** argv) {
             LOG_INFO("Added 'testTable'");
 
             int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
-            size_t i = 0;
+            size_t i = 10;
             crossbow::string text1 = crossbow::string("Sometext");
             crossbow::string text2 = crossbow::string("Moretext");
             auto testTuple = GenericTuple({
@@ -209,7 +209,7 @@ int main(int argc, const char** argv) {
                 LOG_INFO("Inserted tuple.");
             }
 
-            uint32_t selectionLength = 32;
+            uint32_t selectionLength = 56;
             std::unique_ptr<char[]> selection(new char[selectionLength]);
 
             crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
@@ -220,21 +220,22 @@ int main(int argc, const char** argv) {
             selectionWriter.write<uint32_t>(0x0u);      // Partition value
             
             // Selection on the internal tell key
-            selectionWriter.write<uint16_t>(-1);        // -1 is the fixed id of the tell key field
-            selectionWriter.write<uint16_t>(0x2u);      // number of predicates
+            Record::id_t keyField = -1;
+            selectionWriter.write<uint16_t>(keyField); // -1 is the fixed id of the tell key field
+            selectionWriter.write<uint16_t>(0x1u);      // number of predicates
             selectionWriter.align(sizeof(uint64_t));        
             
             // We need a predicate P(key) := range_start <= key < range_end
             // Start with range_start <= key
-            selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+            selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
             selectionWriter.write<uint8_t>(0x0u);       // predicate id
-            selectionWriter.align(sizeof(uint32_t));
-            selectionWriter.write<int32_t>(0x1u);       // second operand is range_start
+            selectionWriter.align(sizeof(uint64_t));
+            selectionWriter.write<int64_t>(0);       // second operand is range_start
             // And then key < range_end
-            selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS);
-            selectionWriter.write<uint8_t>(0x1u);       // predicate id
-            selectionWriter.align(sizeof(uint32_t));
-            selectionWriter.write<int32_t>(0x50u);      // second operand is range_end
+            // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
+            // selectionWriter.write<uint8_t>(0x1u);       // predicate id
+            // selectionWriter.align(sizeof(uint32_t));
+            // selectionWriter.write<int64_t>(50);      // second operand is range_end
 
             auto scanStartTime = std::chrono::steady_clock::now();    
             auto scanIterator = client.scan(mTable, *snapshot, *scanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
