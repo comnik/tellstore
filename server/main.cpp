@@ -172,23 +172,38 @@ int main(int argc, const char** argv) {
         std::unique_ptr<ScanMemoryManager> scanMemory(ownersManager.allocateScanMemory(ownersConfig.tellStore.size(), scanMemoryLength / ownersConfig.tellStore.size()));
         
         // Now we perform a scan for all the ranges.
-        TransactionRunner::executeBlocking(ownersManager, [&scanMemory](ClientHandle& client) {
+        TransactionRunner::executeBlocking(ownersManager, [&scanMemory, &storage](ClientHandle& client) {
             LOG_INFO("Initiating scan...");
         
             auto& fiber = client.fiber();
             auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+            
+            // The schema has to be globally available.
+            // All nodes (old and new) must be initialized with the same schema.
 
-            // Populate with some dummy data
-
-            LOG_INFO("Adding table");
             Schema schema(TableType::TRANSACTIONAL);
             schema.addField(FieldType::INT, "number", true);
             schema.addField(FieldType::BIGINT, "largenumber", true);
             schema.addField(FieldType::TEXT, "text1", true);
             schema.addField(FieldType::TEXT, "text2", true);
 
-            Table mTable = client.createTable("testTable", schema);
-            LOG_INFO("Added 'testTable'");
+            crossbow::string tableName("testTable");
+
+            // First initialize local node
+
+            LOG_INFO("Creating local table...");
+            uint64_t tableId = 0;
+            auto succeeded = storage.createTable(tableName, schema, tableId);
+            LOG_ASSERT((tableId != 0) || !succeeded, "Table ID of 0 does not denote failure");
+
+            if (!succeeded) {
+                LOG_ERROR("Could not create table.");
+            }
+
+            // Now initialize remote node and populate with dummy data
+
+            LOG_INFO("Creating remote table...");
+            Table table = client.createTable(tableName, schema);
 
             int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
             size_t i = 10;
@@ -201,13 +216,13 @@ int main(int argc, const char** argv) {
                 std::make_pair<crossbow::string, boost::any>("text2", text2)
             });
             
-            auto insertFuture = client.insert(mTable, 1, *snapshot, testTuple);
+            LOG_INFO("Populating remote table...");
+            auto insertFuture = client.insert(table, 1, *snapshot, testTuple);
             if (auto ec = insertFuture->error()) {
                 LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
-                return;
-            } else {
-                LOG_INFO("Inserted tuple.");
             }
+
+            // Finally perform the actual key transfer
 
             uint32_t selectionLength = 56;
             std::unique_ptr<char[]> selection(new char[selectionLength]);
@@ -238,7 +253,7 @@ int main(int argc, const char** argv) {
             // selectionWriter.write<int64_t>(50);      // second operand is range_end
 
             auto scanStartTime = std::chrono::steady_clock::now();    
-            auto scanIterator = client.scan(mTable, *snapshot, *scanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+            auto scanIterator = client.scan(table, *snapshot, *scanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
 
             size_t scanCount = 0x0u;
             size_t scanDataSize = 0x0u;
@@ -250,8 +265,13 @@ int main(int argc, const char** argv) {
                 ++scanCount;
                 scanDataSize += tupleLength;
 
-                auto text1Value = mTable.field<crossbow::string>("text1", tuple);
+                auto text1Value = table.field<crossbow::string>("text1", tuple);
                 LOG_INFO("Got tuple with text %1%", text1Value);
+
+                auto tableId = table.tableId();
+
+                auto ec = storage.insert(tableId, key, tupleLength, tuple, *snapshot);
+                LOG_INFO("Got error code %1%", ec);
             }
             auto scanEndTime = std::chrono::steady_clock::now();
 
@@ -271,6 +291,18 @@ int main(int argc, const char** argv) {
             auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
             LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
                     snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+
+            // Ensure the tuples are available locally now
+
+            LOG_INFO("Verifying key transfer...");
+            char* data = new char[256];
+            auto ec = storage.get(table.tableId(), 1, *snapshot, [&data](size_t size, uint64_t version, bool isNewest) { 
+                return data; 
+            });
+            auto text1Value = table.field<crossbow::string>("text1", data);
+            LOG_INFO("Got tuple with text %1%", text1Value);
+
+            LOG_INFO("Got error code %1%", ec);
         });
     }
 
