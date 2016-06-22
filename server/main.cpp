@@ -189,18 +189,7 @@ int main(int argc, const char** argv) {
 
             crossbow::string tableName("testTable");
 
-            // First initialize local node
-
-            LOG_INFO("Creating local table...");
-            uint64_t tableId = 0;
-            auto succeeded = storage.createTable(tableName, schema, tableId);
-            LOG_ASSERT((tableId != 0) || !succeeded, "Table ID of 0 does not denote failure");
-
-            if (!succeeded) {
-                LOG_ERROR("Could not create table.");
-            }
-
-            // Now initialize remote node and populate with dummy data
+            // Initialize remote node and populate with dummy data
 
             LOG_INFO("Creating remote table...");
             Table table = client.createTable(tableName, schema);
@@ -222,6 +211,26 @@ int main(int argc, const char** argv) {
                 LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
             }
 
+            // Initialize local node from previous owners
+
+            LOG_INFO("Fetch remote tables...");
+            auto tablesFuture = client.getTables();
+            if (auto ec = tablesFuture->error()) {
+                LOG_ERROR("Error fetching remote tables [error = %1% %2%]", ec, ec.message());
+            }
+
+            auto tables = tablesFuture->get();
+
+            LOG_INFO("Creating %1% local tables...", tables.size());
+            for (auto const& table : tables) {
+                LOG_INFO("\t%1%", table.tableName());
+                uint64_t tableId = table.tableId();
+                auto succeeded = storage.createTable(table.tableName(), table.record().schema(), tableId);
+                if (!succeeded) {
+                    LOG_ERROR("\tCould not create table %1%", table.tableName());
+                }    
+            }
+            
             // Finally perform the actual key transfer
 
             uint32_t selectionLength = 56;
