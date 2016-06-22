@@ -43,6 +43,193 @@
 
 using namespace tell::store;
 
+// Scan queries have a fixed, known size
+const uint32_t SELECTION_LENGTH = 56;
+
+// Constructs a scan query that matches a specific key range
+std::unique_ptr<char[]> createKeyTransferQuery(int64_t range_start, int64_t range_end) {
+    std::unique_ptr<char[]> selection(new char[SELECTION_LENGTH]);
+
+    crossbow::buffer_writer selectionWriter(selection.get(), SELECTION_LENGTH);
+    selectionWriter.write<uint32_t>(0x1u);      // Number of columns
+    selectionWriter.write<uint16_t>(0x1u);      // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x0u);      // Partition shift
+    selectionWriter.write<uint32_t>(0x0u);      // Partition key
+    selectionWriter.write<uint32_t>(0x0u);      // Partition value
+    
+    // Selection on the internal tell key
+    Record::id_t keyField = -1;
+    selectionWriter.write<uint16_t>(keyField); // -1 is the fixed id of the tell key field
+    selectionWriter.write<uint16_t>(0x1u);      // number of predicates
+    selectionWriter.align(sizeof(uint64_t));        
+    
+    // We need a predicate P(key) := range_start <= key < range_end
+    // Start with range_start <= key
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
+    selectionWriter.write<uint8_t>(0x0u);       // predicate id
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<int64_t>(range_start);       // second operand is range_start
+    
+    // And then key < range_end
+    // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
+    // selectionWriter.write<uint8_t>(0x1u);       // predicate id
+    // selectionWriter.align(sizeof(uint32_t));
+    // selectionWriter.write<int64_t>(range_end);      // second operand is range_end
+
+    return selection;
+}
+
+std::function<void (ClientHandle& client)> initializeRemote() {
+    return [](ClientHandle& client) {
+        auto snapshot = client.startTransaction(TransactionType::READ_WRITE);
+
+        Schema schema(TableType::TRANSACTIONAL);
+        schema.addField(FieldType::INT, "number", true);
+        schema.addField(FieldType::BIGINT, "largenumber", true);
+        schema.addField(FieldType::TEXT, "text1", true);
+        schema.addField(FieldType::TEXT, "text2", true);
+
+        Table table;
+        try {
+            LOG_INFO("Creating remote table...");
+            table = client.createTable("testTable", schema);
+        } catch (const std::system_error& e) {
+            LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
+            auto tableResponse = client.getTable("testTable");
+            table = tableResponse->get();
+        }
+
+        int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
+        size_t i = 10;
+        crossbow::string text1 = crossbow::string("Sometext");
+        crossbow::string text2 = crossbow::string("Moretext");
+        auto testTuple = GenericTuple({
+            std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
+            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+            std::make_pair<crossbow::string, boost::any>("text1", text1),
+            std::make_pair<crossbow::string, boost::any>("text2", text2)
+        });
+
+        LOG_INFO("Populating remote table...");
+        auto insertFuture = client.insert(table, 1, *snapshot, testTuple);
+        if (auto ec = insertFuture->error()) {
+            LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
+        }
+
+        client.commit(*snapshot);
+    };
+}
+
+// Initializes the local node from its peers
+std::function<void (ClientHandle&)> schemaTransfer(Storage& storage) {
+    return [&storage](ClientHandle& client) {
+        LOG_INFO("Fetch remote tables...");
+        auto tablesFuture = client.getTables();
+        if (auto ec = tablesFuture->error()) {
+            LOG_ERROR("Error fetching remote tables [error = %1% %2%]", ec, ec.message());
+        }
+
+        auto tables = tablesFuture->get();
+
+        LOG_INFO("Creating %1% local tables...", tables.size());
+        for (auto const& table : tables) {
+            LOG_INFO("\t%1%", table.tableName());
+            uint64_t tableId = table.tableId();
+            auto succeeded = storage.createTable(table.tableName(), table.record().schema(), tableId);
+            if (!succeeded) {
+                LOG_ERROR("\tCould not create table %1%", table.tableName());
+            }            
+        }
+    };
+}
+
+std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage) {
+    return [&manager, &config, &storage](ClientHandle& client) {
+        // Allocate scan memory
+        size_t scanMemoryLength = 0x80000000ull;
+        std::unique_ptr<ScanMemoryManager> scanMemory = manager.allocateScanMemory(
+            config.tellStore.size(),
+            scanMemoryLength / config.tellStore.size()
+        );
+
+        auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+        auto transferQuery = createKeyTransferQuery(0, 50); // @TODO replace fixed range
+        auto scanStartTime = std::chrono::steady_clock::now();    
+
+        LOG_INFO("Getting table...");        
+        auto tableResponse = client.getTable("testTable");
+
+        try {
+            Table table = tableResponse->get();
+
+            LOG_INFO("Performing scan on table %1%", table.tableName());
+            auto scanIterator = client.scan(
+                table,
+                *snapshot,
+                *scanMemory,
+                ScanQueryType::FULL,
+                SELECTION_LENGTH,
+                transferQuery.get(),
+                0x0u,
+                nullptr
+            );
+
+            size_t scanCount = 0x0u;
+            size_t scanDataSize = 0x0u;
+            while (scanIterator->hasNext()) {
+                uint64_t key;
+                const char* tuple;
+                size_t tupleLength;
+                std::tie(key, tuple, tupleLength) = scanIterator->next();
+                ++scanCount;
+                scanDataSize += tupleLength;
+
+                auto tableId = table.tableId();
+
+                auto text1Value = table.field<crossbow::string>("text1", tuple);
+                LOG_INFO("Got tuple with text %1%", text1Value);
+
+                auto ec = storage.insert(tableId, key, tupleLength, tuple, *snapshot);
+                if (ec != 0) {
+                    LOG_ERROR("Got error code %1%", ec);
+                }
+            }
+            auto scanEndTime = std::chrono::steady_clock::now();
+
+            if (scanIterator->error()) {
+                auto& ec = scanIterator->error();
+                LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+                return;
+            }
+
+            client.commit(*snapshot);
+
+            auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
+            auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
+            auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
+                    std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
+            auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
+            LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
+                    snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+
+            // Ensure the tuples are available locally now
+
+            LOG_INFO("Verifying key transfer...");
+            char* data = new char[256];
+            auto ec = storage.get(table.tableId(), 1, *snapshot, [&data](size_t size, uint64_t version, bool isNewest) { 
+                return data; 
+            });
+            auto text1Value = table.field<crossbow::string>("text1", data);
+            LOG_INFO("Got tuple with text %1%", text1Value);
+
+            if (ec != 0) {
+                LOG_ERROR("Got error code %1%", ec);
+            }
+        } catch (const std::system_error& e) {
+            LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
+        }
+    };
+}
 
 int main(int argc, const char** argv) {
     StorageConfig storageConfig;
@@ -113,14 +300,15 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initialize network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
 
-    LOG_INFO("Register with cluster directory");
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> processor = service.createProcessor();
     tell::commitmanager::ClientSocket commitManagerSocket(service.createSocket(*processor));
 
     crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
     commitManagerSocket.connect(endpoint);
 
-    processor->executeFiber([&ib0addr, &commitManagerSocket, &directoryHost] (crossbow::infinio::Fiber& fiber) {
+    processor->executeFiber([&ib0addr, &commitManagerSocket, &directoryHost, &storage] (crossbow::infinio::Fiber& fiber) {
+        LOG_INFO("Register with cluster directory");
+
         auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
         if (!registerResponse->waitForResult()) {
             auto& ec = registerResponse->error();
@@ -129,178 +317,47 @@ int main(int argc, const char** argv) {
         }
 
         auto clusterMeta = registerResponse->get();
-        
+
         // We registered successfully. This means, the commit manager should have 
         // responded with key ranges we are now responsible for. We have to
         // request these ranges from their current owners and then notify the commit manager that we now control them.
 
         // For this, we treat the set of current owners we need to contact, as a new cluster.
         ClientConfig ownersConfig;
+        ownersConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
+
         for (auto range : clusterMeta->ranges) {
             if (range.owner == ib0addr) {
-                LOG_INFO("This node is the first owner of range [%1%, %2%]", range.start, range.end);
+                LOG_INFO("\t-> first owner of range [%1%, %2%]", range.start, range.end);
             } else {
-                LOG_INFO("Will request range [%1%, %2%] from %3%...", range.start, range.end, range.owner);
+                LOG_INFO("\t-> request range [%1%, %2%] from %3%", range.start, range.end, range.owner);
                 ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
             }
         }
+
+        if ("localhost:7243" != ib0addr) {
+            ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), "localhost:7243");
+        }
+
+        if (ownersConfig.tellStore.size() > 0) {
+            ClientManager<void> ownersManager(ownersConfig);
+            
+            // Initialize and populate the remote nodes
+
+            auto initializeTx = initializeRemote();
+            TransactionRunner::executeBlocking(ownersManager, initializeTx);
+
+            // Perform the schema transfer
+
+            auto schemaTransferTx = schemaTransfer(storage);
+            TransactionRunner::executeBlocking(ownersManager, schemaTransferTx);
+
+            // Perform the key transfer
+            
+            auto keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage);
+            TransactionRunner::executeBlocking(ownersManager, keyTransferTx);
+        }
     });
-
-    ClientConfig ownersConfig;
-    if ("localhost:7243" != ib0addr) {
-        ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), "localhost:7243");
-    }
-
-    if (ownersConfig.tellStore.size() > 0) {
-        ownersConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
-        ClientManager<void> ownersManager(ownersConfig);
-
-        size_t scanMemoryLength = 0x80000000ull;
-        std::unique_ptr<ScanMemoryManager> scanMemory(ownersManager.allocateScanMemory(ownersConfig.tellStore.size(), scanMemoryLength / ownersConfig.tellStore.size()));
-        
-        // Now we perform a scan for all the ranges.
-        TransactionRunner::executeBlocking(ownersManager, [&scanMemory, &storage](ClientHandle& client) {
-            LOG_INFO("Initiating scan...");
-        
-            auto& fiber = client.fiber();
-            auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
-            
-            // The schema has to be globally available.
-            // All nodes (old and new) must be initialized with the same schema.
-
-            Schema schema(TableType::TRANSACTIONAL);
-            schema.addField(FieldType::INT, "number", true);
-            schema.addField(FieldType::BIGINT, "largenumber", true);
-            schema.addField(FieldType::TEXT, "text1", true);
-            schema.addField(FieldType::TEXT, "text2", true);
-
-            crossbow::string tableName("testTable");
-
-            // Initialize remote node and populate with dummy data
-
-            LOG_INFO("Creating remote table...");
-            Table table = client.createTable(tableName, schema);
-
-            int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
-            size_t i = 10;
-            crossbow::string text1 = crossbow::string("Sometext");
-            crossbow::string text2 = crossbow::string("Moretext");
-            auto testTuple = GenericTuple({
-                std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
-                std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-                std::make_pair<crossbow::string, boost::any>("text1", text1),
-                std::make_pair<crossbow::string, boost::any>("text2", text2)
-            });
-            
-            LOG_INFO("Populating remote table...");
-            auto insertFuture = client.insert(table, 1, *snapshot, testTuple);
-            if (auto ec = insertFuture->error()) {
-                LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
-            }
-
-            // Initialize local node from previous owners
-
-            LOG_INFO("Fetch remote tables...");
-            auto tablesFuture = client.getTables();
-            if (auto ec = tablesFuture->error()) {
-                LOG_ERROR("Error fetching remote tables [error = %1% %2%]", ec, ec.message());
-            }
-
-            auto tables = tablesFuture->get();
-
-            LOG_INFO("Creating %1% local tables...", tables.size());
-            for (auto const& table : tables) {
-                LOG_INFO("\t%1%", table.tableName());
-                uint64_t tableId = table.tableId();
-                auto succeeded = storage.createTable(table.tableName(), table.record().schema(), tableId);
-                if (!succeeded) {
-                    LOG_ERROR("\tCould not create table %1%", table.tableName());
-                }    
-            }
-            
-            // Finally perform the actual key transfer
-
-            uint32_t selectionLength = 56;
-            std::unique_ptr<char[]> selection(new char[selectionLength]);
-
-            crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-            selectionWriter.write<uint32_t>(0x1u);      // Number of columns
-            selectionWriter.write<uint16_t>(0x1u);      // Number of conjuncts
-            selectionWriter.write<uint16_t>(0x0u);      // Partition shift
-            selectionWriter.write<uint32_t>(0x0u);      // Partition key
-            selectionWriter.write<uint32_t>(0x0u);      // Partition value
-            
-            // Selection on the internal tell key
-            Record::id_t keyField = -1;
-            selectionWriter.write<uint16_t>(keyField); // -1 is the fixed id of the tell key field
-            selectionWriter.write<uint16_t>(0x1u);      // number of predicates
-            selectionWriter.align(sizeof(uint64_t));        
-            
-            // We need a predicate P(key) := range_start <= key < range_end
-            // Start with range_start <= key
-            selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
-            selectionWriter.write<uint8_t>(0x0u);       // predicate id
-            selectionWriter.align(sizeof(uint64_t));
-            selectionWriter.write<int64_t>(0);       // second operand is range_start
-            // And then key < range_end
-            // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
-            // selectionWriter.write<uint8_t>(0x1u);       // predicate id
-            // selectionWriter.align(sizeof(uint32_t));
-            // selectionWriter.write<int64_t>(50);      // second operand is range_end
-
-            auto scanStartTime = std::chrono::steady_clock::now();    
-            auto scanIterator = client.scan(table, *snapshot, *scanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
-
-            size_t scanCount = 0x0u;
-            size_t scanDataSize = 0x0u;
-            while (scanIterator->hasNext()) {
-                uint64_t key;
-                const char* tuple;
-                size_t tupleLength;
-                std::tie(key, tuple, tupleLength) = scanIterator->next();
-                ++scanCount;
-                scanDataSize += tupleLength;
-
-                auto text1Value = table.field<crossbow::string>("text1", tuple);
-                LOG_INFO("Got tuple with text %1%", text1Value);
-
-                auto tableId = table.tableId();
-
-                auto ec = storage.insert(tableId, key, tupleLength, tuple, *snapshot);
-                LOG_INFO("Got error code %1%", ec);
-            }
-            auto scanEndTime = std::chrono::steady_clock::now();
-
-            if (scanIterator->error()) {
-                auto& ec = scanIterator->error();
-                LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
-                return;
-            }
-
-            LOG_INFO("Committing transaction");
-            client.commit(*snapshot);
-
-            auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
-            auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
-            auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
-                    std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
-            auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
-            LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-                    snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
-
-            // Ensure the tuples are available locally now
-
-            LOG_INFO("Verifying key transfer...");
-            char* data = new char[256];
-            auto ec = storage.get(table.tableId(), 1, *snapshot, [&data](size_t size, uint64_t version, bool isNewest) { 
-                return data; 
-            });
-            auto text1Value = table.field<crossbow::string>("text1", data);
-            LOG_INFO("Got tuple with text %1%", text1Value);
-
-            LOG_INFO("Got error code %1%", ec);
-        });
-    }
 
     LOG_INFO("Initialize network server");
     ServerManager server(service, storage, serverConfig);

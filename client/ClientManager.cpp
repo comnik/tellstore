@@ -183,7 +183,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
                 config.maxBatchSize));
         mTellStoreSocket.back()->connect(ep, mProcessorNum);
 
-        LOG_INFO("Inserting node %1% into hash ring", ep);
+        // LOG_INFO("Inserting node %1% into hash ring", ep);
         size_t idx = mTellStoreSocket.size() - 1;
         mNodeRing.insertNode("node", idx); // @TODO
     }
