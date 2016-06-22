@@ -43,18 +43,6 @@
 
 using namespace tell::store;
 
-// Struct describing a partition [start, end] and the responsible node
-struct Partition {
-    const crossbow::string owner;
-    uint64_t start;
-    uint64_t end;
-
-    Partition(crossbow::string owner, uint64_t start, uint64_t end) :
-                owner(owner),
-                start(start),
-                end(end)
-                {}
-};
 
 int main(int argc, const char** argv) {
     StorageConfig storageConfig;
@@ -140,16 +128,15 @@ int main(int argc, const char** argv) {
             return;
         }
 
-        std::unique_ptr<std::vector<Partition>> ranges(new std::vector<Partition>());
-        ranges->emplace_back("localhost:7243", 1, 50);
-
+        auto clusterMeta = registerResponse->get();
+        
         // We registered successfully. This means, the commit manager should have 
         // responded with key ranges we are now responsible for. We have to
         // request these ranges from their current owners and then notify the commit manager that we now control them.
 
         // For this, we treat the set of current owners we need to contact, as a new cluster.
         ClientConfig ownersConfig;
-        for (auto range : *ranges) {
+        for (auto range : clusterMeta->ranges) {
             if (range.owner == ib0addr) {
                 LOG_INFO("This node is the first owner of range [%1%, %2%]", range.start, range.end);
             } else {
