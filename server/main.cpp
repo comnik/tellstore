@@ -153,16 +153,16 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
         );
 
         auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+        
         auto transferQuery = createKeyTransferQuery(0, 50); // @TODO replace fixed range
-        auto scanStartTime = std::chrono::steady_clock::now();    
-
-        LOG_INFO("Getting table...");        
+        
         auto tableResponse = client.getTable("testTable");
 
         try {
             Table table = tableResponse->get();
 
             LOG_INFO("Performing scan on table %1%", table.tableName());
+            auto scanStartTime = std::chrono::steady_clock::now();    
             auto scanIterator = client.scan(
                 table,
                 *snapshot,
@@ -333,10 +333,6 @@ int main(int argc, const char** argv) {
                 LOG_INFO("\t-> request range [%1%, %2%] from %3%", range.start, range.end, range.owner);
                 ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
             }
-        }
-
-        if ("localhost:7243" != ib0addr) {
-            ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), "localhost:7243");
         }
 
         if (ownersConfig.tellStore.size() > 0) {
