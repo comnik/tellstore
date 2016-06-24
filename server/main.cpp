@@ -44,7 +44,7 @@
 using namespace tell::store;
 
 // Scan queries have a fixed, known size
-const uint32_t SELECTION_LENGTH = 56;
+const uint32_t SELECTION_LENGTH = 128;
 
 // Constructs a scan query that matches a specific key range
 std::unique_ptr<char[]> createKeyTransferQuery(int64_t range_start, int64_t range_end) {
@@ -52,29 +52,30 @@ std::unique_ptr<char[]> createKeyTransferQuery(int64_t range_start, int64_t rang
 
     crossbow::buffer_writer selectionWriter(selection.get(), SELECTION_LENGTH);
     selectionWriter.write<uint32_t>(0x1u);      // Number of columns
-    selectionWriter.write<uint16_t>(0x1u);      // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x2u);      // Number of conjuncts
     selectionWriter.write<uint16_t>(0x0u);      // Partition shift
     selectionWriter.write<uint32_t>(0x0u);      // Partition key
     selectionWriter.write<uint32_t>(0x0u);      // Partition value
     
     // Selection on the internal tell key
     Record::id_t keyField = -1;
-    selectionWriter.write<uint16_t>(keyField); // -1 is the fixed id of the tell key field
-    selectionWriter.write<uint16_t>(0x1u);      // number of predicates
+    selectionWriter.write<uint16_t>(keyField);      // -1 is the fixed id of the tell key field
+    selectionWriter.write<uint16_t>(0x2u);          // number of predicates
     selectionWriter.align(sizeof(uint64_t));        
     
-    // We need a predicate P(key) := range_start <= key < range_end
-    // Start with range_start <= key
-    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
-    selectionWriter.write<uint8_t>(0x0u);       // predicate id
-    selectionWriter.align(sizeof(uint64_t));
-    selectionWriter.write<int64_t>(range_start);       // second operand is range_start
+    // We need a predicate P(key) := range_start < key <= range_end
     
-    // And then key < range_end
-    // selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
-    // selectionWriter.write<uint8_t>(0x1u);       // predicate id
-    // selectionWriter.align(sizeof(uint32_t));
-    // selectionWriter.write<int64_t>(range_end);      // second operand is range_end
+    // Start with range_start < key
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
+    selectionWriter.write<uint8_t>(0x0u);           // predicate id
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<int64_t>(range_start);    // second operand is range_start
+    
+    // And then key <= range_end
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
+    selectionWriter.write<uint8_t>(0x1u);           // predicate id
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<int64_t>(range_end);      // second operand is range_end
 
     return selection;
 }
@@ -100,22 +101,24 @@ std::function<void (ClientHandle& client)> initializeRemote() {
         }
 
         int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
-        size_t i = 10;
         crossbow::string text1 = crossbow::string("Sometext");
         crossbow::string text2 = crossbow::string("Moretext");
-        auto testTuple = GenericTuple({
-            std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
-            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-            std::make_pair<crossbow::string, boost::any>("text1", text1),
-            std::make_pair<crossbow::string, boost::any>("text2", text2)
-        });
 
         LOG_INFO("Populating remote table...");
-        auto insertFuture = client.insert(table, 1, *snapshot, testTuple);
-        if (auto ec = insertFuture->error()) {
-            LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
-        }
+        for (uint64_t key = 0; key < 100; ++key) {
+            auto testTuple = GenericTuple({
+                std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
+                std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                std::make_pair<crossbow::string, boost::any>("text1", text1),
+                std::make_pair<crossbow::string, boost::any>("text2", text2)
+            });
 
+            auto insertFuture = client.insert(table, key, *snapshot, testTuple);
+            if (auto ec = insertFuture->error()) {
+                LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
+            }
+        }
+        
         client.commit(*snapshot);
     };
 }
@@ -186,9 +189,6 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
 
                 auto tableId = table.tableId();
 
-                auto text1Value = table.field<crossbow::string>("text1", tuple);
-                LOG_INFO("Got tuple with text %1%", text1Value);
-
                 auto ec = storage.insert(tableId, key, tupleLength, tuple, *snapshot);
                 if (ec != 0) {
                     LOG_ERROR("Got error code %1%", ec);
@@ -216,15 +216,20 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
 
             LOG_INFO("Verifying key transfer...");
             char* data = new char[256];
-            auto ec = storage.get(table.tableId(), 1, *snapshot, [&data](size_t size, uint64_t version, bool isNewest) { 
+            auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
                 return data; 
-            });
-            auto text1Value = table.field<crossbow::string>("text1", data);
-            LOG_INFO("Got tuple with text %1%", text1Value);
+            };
 
-            if (ec != 0) {
-                LOG_ERROR("Got error code %1%", ec);
+            uint64_t tupleCount = 0;
+            for (uint64_t key = 1; key <= 50; ++key) {
+                auto ec = storage.get(table.tableId(), key, *snapshot, tupleLocation);
+                if (ec != 0) {
+                   LOG_ERROR("\tRetrieving tuple %1% failed with ec %2%", key, ec);
+                } else {
+                    tupleCount++;
+                }
             }
+            LOG_INFO("Found %1% tuples", tupleCount);
         } catch (const std::system_error& e) {
             LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
         }
@@ -300,14 +305,15 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initialize network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
 
-    std::unique_ptr<crossbow::infinio::InfinibandProcessor> processor = service.createProcessor();
+    auto processor = service.createProcessor();
+    
     tell::commitmanager::ClientSocket commitManagerSocket(service.createSocket(*processor));
 
-    crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
-    commitManagerSocket.connect(endpoint);
-
     processor->executeFiber([&ib0addr, &commitManagerSocket, &directoryHost, &storage] (crossbow::infinio::Fiber& fiber) {
-        LOG_INFO("Register with cluster directory");
+        LOG_INFO("Registering with cluster directory...");
+
+        crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
+        commitManagerSocket.connect(endpoint);
 
         auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
         if (!registerResponse->waitForResult()) {
@@ -317,6 +323,9 @@ int main(int argc, const char** argv) {
         }
 
         auto clusterMeta = registerResponse->get();
+
+        // Causes abort
+        // commitManagerSocket.shutdown();
 
         // We registered successfully. This means, the commit manager should have 
         // responded with key ranges we are now responsible for. We have to
@@ -352,9 +361,11 @@ int main(int argc, const char** argv) {
             
             auto keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage);
             TransactionRunner::executeBlocking(ownersManager, keyTransferTx);
+
+            ownersManager.shutdown();
         }
     });
-
+    
     LOG_INFO("Initialize network server");
     ServerManager server(service, storage, serverConfig);
     service.run();

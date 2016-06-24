@@ -371,7 +371,7 @@ void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom
         uint32_t length) {
     LOG_ASSERT(mResult.size() >= mNumConjuncts, "Result array must be larger or equal than number of conjuncts");
 
-    LOG_INFO("Performing scan on key %1%", key);
+    // LOG_INFO("Performing scan on key %1%", key);
     mRowScanFun(key, validFrom, validTo, data, &mResult.front());
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
