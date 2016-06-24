@@ -47,7 +47,7 @@ using namespace tell::store;
 const uint32_t SELECTION_LENGTH = 128;
 
 // Constructs a scan query that matches a specific key range
-std::unique_ptr<char[]> createKeyTransferQuery(int64_t range_start, int64_t range_end) {
+std::unique_ptr<char[]> createKeyTransferQuery(int64_t rangeStart, int64_t rangeEnd) {
     std::unique_ptr<char[]> selection(new char[SELECTION_LENGTH]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), SELECTION_LENGTH);
@@ -63,19 +63,19 @@ std::unique_ptr<char[]> createKeyTransferQuery(int64_t range_start, int64_t rang
     selectionWriter.write<uint16_t>(0x2u);          // number of predicates
     selectionWriter.align(sizeof(uint64_t));        
     
-    // We need a predicate P(key) := range_start < key <= range_end
+    // We need a predicate P(key) := rangeStart < key <= rangeEnd
     
-    // Start with range_start < key
+    // Start with rangeStart < key
     selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
     selectionWriter.write<uint8_t>(0x0u);           // predicate id
     selectionWriter.align(sizeof(uint64_t));
-    selectionWriter.write<int64_t>(range_start);    // second operand is range_start
+    selectionWriter.write<int64_t>(rangeStart);     // second operand is rangeStart
     
-    // And then key <= range_end
+    // And then key <= rangeEnd
     selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
     selectionWriter.write<uint8_t>(0x1u);           // predicate id
     selectionWriter.align(sizeof(uint64_t));
-    selectionWriter.write<int64_t>(range_end);      // second operand is range_end
+    selectionWriter.write<int64_t>(rangeEnd);       // second operand is rangeEnd
 
     return selection;
 }
@@ -107,7 +107,7 @@ std::function<void (ClientHandle& client)> initializeRemote() {
         crossbow::string text2 = crossbow::string("Moretext");
 
         LOG_INFO("Populating remote tables...");
-        for (uint64_t key = 0; key < 100; ++key) {
+        for (uint64_t key = 1; key <= 100; ++key) {
             auto testTuple = GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
                 std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
@@ -157,8 +157,8 @@ std::function<void (ClientHandle&)> schemaTransfer(Storage& storage) {
     };
 }
 
-std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage, crossbow::string tableName) {
-    return [&manager, &config, &storage, &tableName](ClientHandle& client) {
+std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage, crossbow::string tableName, uint64_t rangeStart, uint64_t rangeEnd) {
+    return [&manager, &config, &storage, &tableName, rangeStart, rangeEnd](ClientHandle& client) {
         // Allocate scan memory
         size_t scanMemoryLength = 0x80000000ull;
         std::unique_ptr<ScanMemoryManager> scanMemory = manager.allocateScanMemory(
@@ -169,7 +169,7 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
         try {
             auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
         
-            auto transferQuery = createKeyTransferQuery(0, 50); // @TODO replace fixed range
+            auto transferQuery = createKeyTransferQuery(rangeStart, rangeEnd); 
 
             auto tableResponse = client.getTable(tableName);
             if (tableResponse->error()) {
@@ -353,9 +353,11 @@ int main(int argc, const char** argv) {
 
             // Perform the key transfer across all tables
             
-            for (auto const& table : storage.getTables()) {
-                auto tx = keyTransfer(ownersManager, ownersConfig, storage, table->tableName());
-                TransactionRunner::executeBlocking(ownersManager, tx);
+            for (auto range : clusterMeta->ranges) {
+                for (auto const& table : storage.getTables()) {
+                    auto tx = keyTransfer(ownersManager, ownersConfig, storage, table->tableName(), range.start, range.end);
+                    TransactionRunner::executeBlocking(ownersManager, tx);
+                }
             }
 
             // Ensure the tuples are available locally now
@@ -378,7 +380,7 @@ int main(int argc, const char** argv) {
                     }
                 }
             }
-            LOG_ASSERT(tupleCount == 50, "Could not retrieve all tuples!");
+            LOG_ASSERT(tupleCount == 49, "Could not retrieve all tuples!");
             LOG_INFO("Found %1% tuples", tupleCount);
             
             ownersManager.shutdown();
