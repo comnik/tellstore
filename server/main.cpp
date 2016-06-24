@@ -90,21 +90,23 @@ std::function<void (ClientHandle& client)> initializeRemote() {
         schema.addField(FieldType::TEXT, "text1", true);
         schema.addField(FieldType::TEXT, "text2", true);
 
-        Table table;
+        Table table1;
+        Table table2;
         try {
-            LOG_INFO("Creating remote table...");
-            table = client.createTable("testTable", schema);
+            LOG_INFO("Creating remote tables...");
+            table1 = client.createTable("testTable1", schema);
+            table2 = client.createTable("testTable2", schema);
         } catch (const std::system_error& e) {
             LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
-            auto tableResponse = client.getTable("testTable");
-            table = tableResponse->get();
+            table1 = client.getTable("testTable1")->get();
+            table2 = client.getTable("testTable2")->get();
         }
 
         int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
         crossbow::string text1 = crossbow::string("Sometext");
         crossbow::string text2 = crossbow::string("Moretext");
 
-        LOG_INFO("Populating remote table...");
+        LOG_INFO("Populating remote tables...");
         for (uint64_t key = 0; key < 100; ++key) {
             auto testTuple = GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
@@ -113,9 +115,18 @@ std::function<void (ClientHandle& client)> initializeRemote() {
                 std::make_pair<crossbow::string, boost::any>("text2", text2)
             });
 
-            auto insertFuture = client.insert(table, key, *snapshot, testTuple);
-            if (auto ec = insertFuture->error()) {
-                LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
+            if (key > 30) {
+                LOG_INFO("\t-> Inserting into table 2");
+                auto insertFuture = client.insert(table2, key, *snapshot, testTuple);
+                if (auto ec = insertFuture->error()) {
+                    LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
+                }
+            } else {
+                LOG_INFO("\t-> Inserting into table 1");
+                auto insertFuture = client.insert(table1, key, *snapshot, testTuple);
+                if (auto ec = insertFuture->error()) {
+                    LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
+                }
             }
         }
         
@@ -146,8 +157,8 @@ std::function<void (ClientHandle&)> schemaTransfer(Storage& storage) {
     };
 }
 
-std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage) {
-    return [&manager, &config, &storage](ClientHandle& client) {
+std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage, crossbow::string tableName) {
+    return [&manager, &config, &storage, &tableName](ClientHandle& client) {
         // Allocate scan memory
         size_t scanMemoryLength = 0x80000000ull;
         std::unique_ptr<ScanMemoryManager> scanMemory = manager.allocateScanMemory(
@@ -159,10 +170,8 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
         
         auto transferQuery = createKeyTransferQuery(0, 50); // @TODO replace fixed range
         
-        auto tableResponse = client.getTable("testTable");
-
         try {
-            Table table = tableResponse->get();
+            Table table = client.getTable(tableName)->get();
 
             LOG_INFO("Performing scan on table %1%", table.tableName());
             auto scanStartTime = std::chrono::steady_clock::now();    
@@ -359,7 +368,10 @@ int main(int argc, const char** argv) {
 
             // Perform the key transfer
             
-            auto keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage);
+            auto keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage, "testTable1");
+            TransactionRunner::executeBlocking(ownersManager, keyTransferTx);
+
+            keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage, "testTable2");
             TransactionRunner::executeBlocking(ownersManager, keyTransferTx);
 
             ownersManager.shutdown();
