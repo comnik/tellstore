@@ -166,12 +166,16 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
             scanMemoryLength / config.tellStore.size()
         );
 
-        auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
-        
-        auto transferQuery = createKeyTransferQuery(0, 50); // @TODO replace fixed range
-        
         try {
-            Table table = client.getTable(tableName)->get();
+            auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+        
+            auto transferQuery = createKeyTransferQuery(0, 50); // @TODO replace fixed range
+
+            auto tableResponse = client.getTable(tableName);
+            if (tableResponse->error()) {
+                LOG_ERROR("Error fetching table %1%", tableName);
+            }
+            Table table = tableResponse->get();
 
             LOG_INFO("Performing scan on table %1%", table.tableName());
             auto scanStartTime = std::chrono::steady_clock::now();    
@@ -220,25 +224,6 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
             auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
             LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
                     snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
-
-            // Ensure the tuples are available locally now
-
-            LOG_INFO("Verifying key transfer...");
-            char* data = new char[256];
-            auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
-                return data; 
-            };
-
-            uint64_t tupleCount = 0;
-            for (uint64_t key = 1; key <= 50; ++key) {
-                auto ec = storage.get(table.tableId(), key, *snapshot, tupleLocation);
-                if (ec != 0) {
-                   LOG_ERROR("\tRetrieving tuple %1% failed with ec %2%", key, ec);
-                } else {
-                    tupleCount++;
-                }
-            }
-            LOG_INFO("Found %1% tuples", tupleCount);
         } catch (const std::system_error& e) {
             LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
         }
@@ -366,14 +351,36 @@ int main(int argc, const char** argv) {
             auto schemaTransferTx = schemaTransfer(storage);
             TransactionRunner::executeBlocking(ownersManager, schemaTransferTx);
 
-            // Perform the key transfer
+            // Perform the key transfer across all tables
             
-            auto keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage, "testTable1");
-            TransactionRunner::executeBlocking(ownersManager, keyTransferTx);
+            for (auto const& table : storage.getTables()) {
+                auto tx = keyTransfer(ownersManager, ownersConfig, storage, table->tableName());
+                TransactionRunner::executeBlocking(ownersManager, tx);
+            }
 
-            keyTransferTx = keyTransfer(ownersManager, ownersConfig, storage, "testTable2");
-            TransactionRunner::executeBlocking(ownersManager, keyTransferTx);
+            // Ensure the tuples are available locally now
 
+            LOG_INFO("Verifying key transfer...");
+            auto snapshot = ClientHandle::createAnalyticalSnapshot(0, std::numeric_limits<uint64_t>::max());
+            char* data = new char[256];
+            auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
+                return data; 
+            };
+
+            uint64_t tupleCount = 0;
+            for (uint64_t key = 1; key <= 50; ++key) {
+                for (auto const& table : storage.getTables()) {
+                    auto ec = storage.get(table->tableId(), key, *snapshot, tupleLocation);
+                    if (ec == 0) {
+                        tupleCount++;
+                    } else {
+                        // LOG_ERROR("\t-> failed to retrieve tuple %1% from table %2% (ec %3%)", key, table->tableName(), ec);
+                    }
+                }
+            }
+            LOG_ASSERT(tupleCount == 50, "Could not retrieve all tuples!");
+            LOG_INFO("Found %1% tuples", tupleCount);
+            
             ownersManager.shutdown();
         }
     });
