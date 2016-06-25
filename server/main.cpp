@@ -32,6 +32,7 @@
 #include <util/StorageConfig.hpp>
 
 #include <commitmanager/ClientSocket.hpp>
+#include <commitmanager/MessageTypes.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
@@ -299,98 +300,93 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initialize network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
 
-    auto processor = service.createProcessor();
-    
-    tell::commitmanager::ClientSocket commitManagerSocket(service.createSocket(*processor));
+    ClientConfig clusterConfig;
+    clusterConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
 
-    processor->executeFiber([&ib0addr, &commitManagerSocket, &directoryHost, &storage] (crossbow::infinio::Fiber& fiber) {
-        LOG_INFO("Registering with cluster directory...");
+    ClientManager<void> clusterManager(clusterConfig);
 
-        crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
-        commitManagerSocket.connect(endpoint);
+    // Register with the commit-manager
 
-        auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
-        if (!registerResponse->waitForResult()) {
-            auto& ec = registerResponse->error();
-            LOG_INFO("Error while registering [error = %1% %2%]", ec, ec.message());
-            return;
-        }
+    LOG_INFO("Registering with commit-manager...");
 
-        auto clusterMeta = registerResponse->get();
-
-        // Causes abort
-        // commitManagerSocket.shutdown();
-
-        // We registered successfully. This means, the commit manager should have 
-        // responded with key ranges we are now responsible for. We have to
-        // request these ranges from their current owners and then notify the commit manager that we now control them.
-
-        // For this, we treat the set of current owners we need to contact, as a new cluster.
-        ClientConfig ownersConfig;
-        ownersConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
-
-        for (auto range : clusterMeta->ranges) {
-            if (range.owner == ib0addr) {
-                LOG_INFO("\t-> first owner of range [%1%, %2%]", range.start, range.end);
-            } else {
-                LOG_INFO("\t-> request range [%1%, %2%] from %3%", range.start, range.end, range.owner);
-                ownersConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
-            }
-        }
-
-        if (ownersConfig.tellStore.size() > 0) {
-            ClientManager<void> ownersManager(ownersConfig);
-            
-            // Initialize and populate the remote nodes
-
-            auto initializeTx = initializeRemote();
-            TransactionRunner::executeBlocking(ownersManager, initializeTx);
-
-            // Perform the schema transfer
-
-            auto schemaTransferTx = schemaTransfer(storage);
-            TransactionRunner::executeBlocking(ownersManager, schemaTransferTx);
-
-            // Perform the key transfer across all tables
-            
-            for (auto range : clusterMeta->ranges) {
-                for (auto const& table : storage.getTables()) {
-                    auto tx = keyTransfer(ownersManager, ownersConfig, storage, table->tableName(), range.start, range.end);
-                    TransactionRunner::executeBlocking(ownersManager, tx);
-                }
-            }
-
-            // Ensure the tuples are available locally now
-
-            LOG_INFO("Verifying key transfer...");
-            auto snapshot = ClientHandle::createAnalyticalSnapshot(0, std::numeric_limits<uint64_t>::max());
-            char* data = new char[256];
-            auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
-                return data; 
-            };
-
-            uint64_t tupleCount = 0;
-            for (uint64_t key = 1; key <= 50; ++key) {
-                for (auto const& table : storage.getTables()) {
-                    auto ec = storage.get(table->tableId(), key, *snapshot, tupleLocation);
-                    if (ec == 0) {
-                        tupleCount++;
-                    } else {
-                        // LOG_ERROR("\t-> failed to retrieve tuple %1% from table %2% (ec %3%)", key, table->tableName(), ec);
-                    }
-                }
-            }
-            LOG_ASSERT(tupleCount == 49, "Could not retrieve all tuples!");
-            LOG_INFO("Found %1% tuples", tupleCount);
-            
-            ownersManager.shutdown();
-        }
+    std::unique_ptr<tell::commitmanager::ClusterMeta> clusterMeta;
+    TransactionRunner::executeBlocking(clusterManager, [&ib0addr, &clusterMeta](ClientHandle& client) { 
+        clusterMeta = std::move(client.registerNode(ib0addr, "STORAGE"));
     });
+
+    // We registered successfully. This means, the commit manager should have 
+    // responded with key ranges we are now responsible for. We have to
+    // request these ranges from their current owners and then notify the commit manager that we now control them.
+
+    // For this, we treat the set of current owners we need to contact, as a new cluster.
+
+    for (auto range : clusterMeta->ranges) {
+        if (range.owner == ib0addr) {
+            LOG_INFO("\t-> first owner of range [%1%, %2%]", range.start, range.end);
+        } else {
+            LOG_INFO("\t-> request range [%1%, %2%] from %3%", range.start, range.end, range.owner);
+            clusterConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
+        }
+    }
+
+    if (clusterConfig.tellStore.size() > 0) {
+        // Re-initialize the ClientManager
+        
+        ClientManager<void> clusterManager(clusterConfig);
+        
+        // Initialize and populate the remote nodes
+
+        auto initializeTx = initializeRemote();
+        TransactionRunner::executeBlocking(clusterManager, initializeTx);
+
+        // Perform the schema transfer
+
+        auto schemaTransferTx = schemaTransfer(storage);
+        TransactionRunner::executeBlocking(clusterManager, schemaTransferTx);
+
+        // Perform the key transfer across all tables
+        
+        for (auto range : clusterMeta->ranges) {
+            for (auto const& table : storage.getTables()) {
+                auto tx = keyTransfer(clusterManager, clusterConfig, storage, table->tableName(), range.start, range.end);
+                TransactionRunner::executeBlocking(clusterManager, tx);
+            }
+        }
+
+        // Ensure the tuples are available locally now
+
+        LOG_INFO("Verifying key transfer...");
+        auto snapshot = ClientHandle::createAnalyticalSnapshot(0, std::numeric_limits<uint64_t>::max());
+        char* data = new char[256];
+        auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
+            return data; 
+        };
+
+        uint64_t tupleCount = 0;
+        for (uint64_t key = 1; key <= 50; ++key) {
+            for (auto const& table : storage.getTables()) {
+                auto ec = storage.get(table->tableId(), key, *snapshot, tupleLocation);
+                if (ec == 0) {
+                    tupleCount++;
+                } else {
+                    // LOG_ERROR("\t-> failed to retrieve tuple %1% from table %2% (ec %3%)", key, table->tableName(), ec);
+                }
+            }
+        }
+        LOG_ASSERT(tupleCount == 49, "Could not retrieve all tuples!");
+        LOG_INFO("Found %1% tuples", tupleCount);
+    }
     
     LOG_INFO("Initialize network server");
     ServerManager server(service, storage, serverConfig);
     service.run();
 
     LOG_INFO("Exiting TellStore server");
+
+    TransactionRunner::executeBlocking(clusterManager, [&ib0addr](ClientHandle& client) {
+        LOG_INFO("Unregistering with commit-manager...");
+        client.unregisterNode(ib0addr);
+    });
+    
     return 0;
 }

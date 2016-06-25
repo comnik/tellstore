@@ -32,6 +32,7 @@
 
 #include <commitmanager/ClientSocket.hpp>
 #include <commitmanager/SnapshotDescriptor.hpp>
+#include <commitmanager/MessageTypes.hpp>
 
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/Fiber.hpp>
@@ -76,6 +77,10 @@ public:
     crossbow::infinio::Fiber& fiber() {
         return mFiber;
     }
+
+    std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::string host, crossbow::string tag);
+
+    void unregisterNode(crossbow::string host);
 
     std::unique_ptr<commitmanager::SnapshotDescriptor> startTransaction(
             TransactionType type = TransactionType::READ_WRITE);
@@ -138,6 +143,10 @@ private:
 class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
     void shutdown();
+
+    std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::infinio::Fiber& fiber, crossbow::string host, crossbow::string tag);
+    
+    void unregisterNode(crossbow::infinio::Fiber& fiber, crossbow::string host);
 
     std::unique_ptr<commitmanager::SnapshotDescriptor> start(crossbow::infinio::Fiber& fiber, TransactionType type);
 

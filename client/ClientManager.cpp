@@ -46,6 +46,14 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createAnalytica
     return commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
 }
 
+std::unique_ptr<commitmanager::ClusterMeta> ClientHandle::registerNode(crossbow::string host, crossbow::string tag) {
+    return mProcessor.registerNode(mFiber, host, tag);
+}
+
+void ClientHandle::unregisterNode(crossbow::string host) {
+    return mProcessor.unregisterNode(mFiber, host);
+}
+
 std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransaction(
         TransactionType type /* = TransactionType::READ_WRITE */) {
     return mProcessor.start(mFiber, type);
@@ -198,6 +206,22 @@ void BaseClientProcessor::shutdown() {
     for (auto& socket : mTellStoreSocket) {
         socket->shutdown();
     }
+}
+
+std::unique_ptr<commitmanager::ClusterMeta> BaseClientProcessor::registerNode(crossbow::infinio::Fiber& fiber, crossbow::string host, crossbow::string tag) {
+    auto registerResponse = mCommitManagerSocket.registerNode(fiber, host, tag);
+    if (auto& ec = registerResponse->error()) {
+        LOG_ERROR("Error while registering [error = %1% %2%]", ec, ec.message());
+    }
+    return registerResponse->get();
+}
+
+void BaseClientProcessor::unregisterNode(crossbow::infinio::Fiber& fiber, crossbow::string host) {
+    auto unregisterResponse = mCommitManagerSocket.unregisterNode(fiber, host);
+    if (auto& ec = unregisterResponse->error()) {
+        LOG_ERROR("Error while unregistering [error = %1% %2%]", ec, ec.message());
+    }
+    unregisterResponse->get();
 }
 
 std::unique_ptr<commitmanager::SnapshotDescriptor> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber,
