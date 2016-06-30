@@ -39,6 +39,7 @@ enum class FieldType
     SMALLINT = 2,
     INT,
     BIGINT,
+    HASH128,
     FLOAT,
     DOUBLE,
     TEXT, // this is used for CHAR and VARCHAR as well

@@ -87,6 +87,9 @@ llvm::Type* LLVMBuilder::getFieldTy(FieldType field) {
     case FieldType::BIGINT:
         return getInt64Ty();
 
+    case FieldType::HASH128:
+        return getInt128Ty();
+
     case FieldType::FLOAT:
         return getFloatTy();
 
@@ -109,6 +112,9 @@ llvm::PointerType* LLVMBuilder::getFieldPtrTy(FieldType field, unsigned AddrSpac
 
     case FieldType::BIGINT:
         return getInt64PtrTy(AddrSpace);
+
+    case FieldType::HASH128:
+        return getInt128PtrTy(AddrSpace);
 
     case FieldType::FLOAT:
         return getFloatPtrTy(AddrSpace);

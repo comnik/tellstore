@@ -88,6 +88,7 @@ public:
         case FieldType::SMALLINT:
         case FieldType::INT:
         case FieldType::BIGINT:
+        case FieldType::HASH128:
         case FieldType::FLOAT:
         case FieldType::DOUBLE:
             return true;
@@ -113,6 +114,8 @@ public:
         case FieldType::BIGINT:
         case FieldType::DOUBLE:
             return 16;
+        case FieldType::HASH128:
+            return 32;
         case FieldType::TEXT:
         case FieldType::BLOB:
             return crossbow::align(8 + *reinterpret_cast<const uint32_t*>(data + 4), 8);
@@ -136,6 +139,8 @@ public:
             return sizeof(int32_t);
         case FieldType::BIGINT:
             return sizeof(int64_t);
+        case FieldType::HASH128:
+            return sizeof(__int128);    
         case FieldType::FLOAT:
             return sizeof(float);
         case FieldType::DOUBLE:
@@ -162,6 +167,8 @@ public:
             return alignof(int32_t);
         case FieldType::BIGINT:
             return alignof(int64_t);
+        case FieldType::HASH128:
+            return alignof(__int128);
         case FieldType::FLOAT:
             return alignof(float);
         case FieldType::DOUBLE:

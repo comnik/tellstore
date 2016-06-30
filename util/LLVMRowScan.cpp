@@ -70,6 +70,7 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
             LOG_DEBUG("Scanning on internal field!");
             lhs = getParam(key);
         } else if (fieldAst.needsValue) {
+            LOG_DEBUG("Scanning on regular field @ offset %1%", fieldAst.offset);
             lhs = getParam(recordData);
             if (fieldAst.offset != 0) {
                 lhs = CreateInBoundsGEP(lhs, getInt64(fieldAst.offset));

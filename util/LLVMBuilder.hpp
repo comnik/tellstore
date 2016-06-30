@@ -90,6 +90,10 @@ public:
         return llvm::Type::getInt64PtrTy(Context, AddrSpace);
     }
 
+    llvm::PointerType* getInt128PtrTy(unsigned AddrSpace = 0) {
+        return llvm::PointerType::get(llvm::IntegerType::get(Context, 128), AddrSpace);
+    }
+
     llvm::Type* getInt64VectorTy(uint64_t vectorSize) {
         return getVectorTy(getInt64Ty(), vectorSize);
     }

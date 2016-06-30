@@ -28,11 +28,11 @@
 #include <tellstore/ScanMemory.hpp>
 #include <tellstore/Table.hpp>
 #include <tellstore/TransactionType.hpp>
-#include <tellstore/HashRing.hpp>
 
 #include <commitmanager/ClientSocket.hpp>
 #include <commitmanager/SnapshotDescriptor.hpp>
 #include <commitmanager/MessageTypes.hpp>
+#include <commitmanager/HashRing.hpp>
 
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/Fiber.hpp>
@@ -165,14 +165,14 @@ public:
     std::shared_ptr<ClusterResponse<GetResponse>> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
         // Try to get a node for this request
-        auto node = shard(key);
+        auto node = shard(tableId, key);
 
         if (node == nullptr) {
             // Cluster information is not available
             // Remember what we wanted to do
             auto req = [this, &fiber, tableId, key, &snapshot] () -> std::shared_ptr<GetResponse> {
                 // TODO: What do we do here, if cluster information still not available for some reason?
-                auto node = shard(key);
+                auto node = shard(tableId, key);
                 return node->get(fiber, tableId, key, snapshot);
             };
 
@@ -200,22 +200,22 @@ public:
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return shard(key)->insert(fiber, tableId, key, snapshot, tuple);
+        return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
     }
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return shard(key)->update(fiber, tableId, key, snapshot, tuple);
+        return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
     }
 
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(key)->remove(fiber, tableId, key, snapshot);
+        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(key)->revert(fiber, tableId, key, snapshot);
+        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ScanIterator> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
@@ -240,9 +240,9 @@ private:
     /**
      * @brief The socket associated with the shard for the given table and key
      */
-    store::ClientSocket* shard(uint64_t key) {
+    store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
         // TODO Change getNode to return a size_t directly if we definitely don't need to store any other node information in the ring.
-        const size_t* nodeId = mNodeRing.getNode(key);
+        const size_t* nodeId = mNodeRing.getNode(tableId, key);
         if (nodeId != nullptr) {
             return mTellStoreSocket.at(*nodeId).get();
         } else {
@@ -257,7 +257,7 @@ private:
     commitmanager::ClientSocket mCommitManagerSocket;
     std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
-    store::HashRing<size_t> mNodeRing;
+    commitmanager::HashRing<size_t> mNodeRing;
 
     std::atomic_flag mRequestIsPending = ATOMIC_FLAG_INIT;
     std::atomic<tell::commitmanager::ClusterStateResponse*> mPendingClusterStatusReq;

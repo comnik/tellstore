@@ -33,6 +33,7 @@
 
 #include <commitmanager/ClientSocket.hpp>
 #include <commitmanager/MessageTypes.hpp>
+#include <commitmanager/HashRing.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
@@ -48,7 +49,7 @@ using namespace tell::store;
 const uint32_t SELECTION_LENGTH = 128;
 
 // Constructs a scan query that matches a specific key range
-std::unique_ptr<char[]> createKeyTransferQuery(int64_t rangeStart, int64_t rangeEnd) {
+std::unique_ptr<char[]> createKeyTransferQuery(Table table, __int128 rangeStart, __int128 rangeEnd) {
     std::unique_ptr<char[]> selection(new char[SELECTION_LENGTH]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), SELECTION_LENGTH);
@@ -58,8 +59,11 @@ std::unique_ptr<char[]> createKeyTransferQuery(int64_t rangeStart, int64_t range
     selectionWriter.write<uint32_t>(0x0u);      // Partition key
     selectionWriter.write<uint32_t>(0x0u);      // Partition value
     
-    // Selection on the internal tell key
-    Record::id_t keyField = -1;
+    // Selection on the partition key
+    Record::id_t keyField;
+    table.record().idOf("__partition_key", keyField);
+    LOG_ASSERT(keyField >= 0, "Schema must have an partition key defined.");
+
     selectionWriter.write<uint16_t>(keyField);      // -1 is the fixed id of the tell key field
     selectionWriter.write<uint16_t>(0x2u);          // number of predicates
     selectionWriter.align(sizeof(uint64_t));        
@@ -69,14 +73,14 @@ std::unique_ptr<char[]> createKeyTransferQuery(int64_t rangeStart, int64_t range
     // Start with rangeStart < key
     selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
     selectionWriter.write<uint8_t>(0x0u);           // predicate id
-    selectionWriter.align(sizeof(uint64_t));
-    selectionWriter.write<int64_t>(rangeStart);     // second operand is rangeStart
+    selectionWriter.align(sizeof(__int128));
+    selectionWriter.write<__int128>(rangeStart);     // second operand is rangeStart
     
     // And then key <= rangeEnd
     selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
     selectionWriter.write<uint8_t>(0x1u);           // predicate id
-    selectionWriter.align(sizeof(uint64_t));
-    selectionWriter.write<int64_t>(rangeEnd);       // second operand is rangeEnd
+    selectionWriter.align(sizeof(__int128));
+    selectionWriter.write<__int128>(rangeEnd);       // second operand is rangeEnd
 
     return selection;
 }
@@ -86,6 +90,7 @@ std::function<void (ClientHandle& client)> initializeRemote() {
         auto snapshot = client.startTransaction(TransactionType::READ_WRITE);
 
         Schema schema(TableType::TRANSACTIONAL);
+        schema.addField(FieldType::HASH128, "__partition_key", true);
         schema.addField(FieldType::INT, "number", true);
         schema.addField(FieldType::BIGINT, "largenumber", true);
         schema.addField(FieldType::TEXT, "text1", true);
@@ -109,7 +114,9 @@ std::function<void (ClientHandle& client)> initializeRemote() {
 
         LOG_INFO("Populating remote tables...");
         for (uint64_t key = 1; key <= 100; ++key) {
+            auto partitionKey = tell::commitmanager::HashRing<size_t>::getPartitionToken(table1.tableId(), key);
             auto testTuple = GenericTuple({
+                std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
                 std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
                 std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
                 std::make_pair<crossbow::string, boost::any>("text1", text1),
@@ -117,13 +124,13 @@ std::function<void (ClientHandle& client)> initializeRemote() {
             });
 
             if (key > 30) {
-                LOG_INFO("\t-> Inserting into table 2");
+                // LOG_INFO("\t-> Inserting into table 2");
                 auto insertFuture = client.insert(table2, key, *snapshot, testTuple);
                 if (auto ec = insertFuture->error()) {
                     LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
                 }
             } else {
-                LOG_INFO("\t-> Inserting into table 1");
+                // LOG_INFO("\t-> Inserting into table 1");
                 auto insertFuture = client.insert(table1, key, *snapshot, testTuple);
                 if (auto ec = insertFuture->error()) {
                     LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
@@ -170,13 +177,13 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, Cl
         try {
             auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
         
-            auto transferQuery = createKeyTransferQuery(rangeStart, rangeEnd); 
-
             auto tableResponse = client.getTable(tableName);
             if (tableResponse->error()) {
                 LOG_ERROR("Error fetching table %1%", tableName);
             }
             Table table = tableResponse->get();
+
+            auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
 
             LOG_INFO("Performing scan on table %1%", table.tableName());
             auto scanStartTime = std::chrono::steady_clock::now();    
@@ -322,9 +329,9 @@ int main(int argc, const char** argv) {
 
     for (auto range : clusterMeta->ranges) {
         if (range.owner == ib0addr) {
-            LOG_INFO("\t-> first owner of range [%1%, %2%]", range.start, range.end);
+            LOG_INFO("\t-> first owner of range [%1%, %2%]", (uint64_t) range.start, (uint64_t) range.end);
         } else {
-            LOG_INFO("\t-> request range [%1%, %2%] from %3%", range.start, range.end, range.owner);
+            LOG_INFO("\t-> request range [%1%, %2%] from %3%", (uint64_t) range.start, (uint64_t) range.end, range.owner);
             clusterConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
         }
     }
@@ -359,7 +366,7 @@ int main(int argc, const char** argv) {
         auto snapshot = ClientHandle::createAnalyticalSnapshot(0, std::numeric_limits<uint64_t>::max());
         char* data = new char[256];
         auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
-            return data; 
+            return data;
         };
 
         uint64_t tupleCount = 0;

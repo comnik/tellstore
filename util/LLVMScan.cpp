@@ -168,15 +168,16 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     fieldAst.size        = sizeof(int64_t);
 
                 } else {
-                    LOG_DEBUG("Scan on regular field detected");
-
                     auto& fieldMeta = mRecord.getFieldMeta(currentColumn);
                     auto& field = fieldMeta.field;
+
+                    LOG_DEBUG("Preparing scan on regular field @ offset %1% detected", fieldMeta.offset);
 
                     fieldAst.id          = currentColumn;
                     fieldAst.isNotNull   = field.isNotNull();
                     fieldAst.nullIdx     = (field.isNotNull() ? 0 : fieldMeta.nullIdx);
                     fieldAst.isFixedSize = field.isFixedSized();
+                    fieldAst.isInternal  = false;
                     fieldAst.type        = field.type();
                     fieldAst.offset      = fieldMeta.offset;
                     fieldAst.alignment   = field.alignOf();
@@ -224,9 +225,15 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     } break;
 
                     case FieldType::BIGINT: {
-                        LOG_DEBUG("Getting int64_t value for predicate");
                         queryReader.advance(6);
                         predicateAst.fixed.value = builder.getInt64(queryReader.read<int64_t>());
+                        predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
+                        predicateAst.fixed.isFloat = false;
+                    } break;
+
+                    case FieldType::HASH128: {
+                        queryReader.advance(6);
+                        predicateAst.fixed.value = builder.getIntN(128, queryReader.read<__int128>());
                         predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
                         predicateAst.fixed.isFloat = false;
                     } break;
