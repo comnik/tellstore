@@ -47,7 +47,12 @@ using namespace tell::store;
 using namespace tell::commitmanager;
 
 // Scan queries have a fixed, known size
-const uint32_t SELECTION_LENGTH = 128;
+const uint32_t SELECTION_LENGTH = 136;
+
+crossbow::string writeHash(Hash hash) {
+    uint64_t* value = (uint64_t*) &hash;
+    return crossbow::to_string(value[1]) + crossbow::to_string(value[0]);
+}
 
 // Constructs a scan query that matches a specific key range
 std::unique_ptr<char[]> createKeyTransferQuery(Table table, Hash rangeStart, Hash rangeEnd) {
@@ -72,27 +77,22 @@ std::unique_ptr<char[]> createKeyTransferQuery(Table table, Hash rangeStart, Has
     // We need a predicate P(key) := rangeStart < key <= rangeEnd
     
     // Start with rangeStart < key
-    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER));
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::UNSIGNED_GREATER));
     selectionWriter.write<uint8_t>(0x0u);           // predicate id
-    selectionWriter.align(sizeof(__int128));
-    selectionWriter.write<__int128>(rangeStart);     // second operand is rangeStart
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<Hash>(rangeStart);
     
     // And then key <= rangeEnd
-    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::LESS_EQUAL));
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::UNSIGNED_LESS_EQUAL));
     selectionWriter.write<uint8_t>(0x1u);           // predicate id
-    selectionWriter.align(sizeof(__int128));
-    selectionWriter.write<__int128>(rangeEnd);       // second operand is rangeEnd
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<Hash>(rangeEnd);
 
     return selection;
 }
 
-crossbow::string writeHash(Hash hash) {
-    uint64_t* value = (uint64_t*) &hash;
-    return crossbow::to_string(value[1]) + crossbow::to_string(value[0]);
-}
-
 std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Hash rangeEnd) {
-    return [rangeStart, rangeEnd](ClientHandle& client) {
+    return [rangeStart, rangeEnd](ClientHandle& client) {        
         auto snapshot = client.startTransaction(TransactionType::READ_WRITE);
 
         Schema schema(TableType::TRANSACTIONAL);
@@ -118,26 +118,37 @@ std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Has
         crossbow::string text1 = crossbow::string("Sometext");
         crossbow::string text2 = crossbow::string("Moretext");
 
-        LOG_INFO("Populating remote tables...");
+        LOG_INFO("Populating remote tables... (%1%) (%2%)", writeHash(rangeStart), writeHash(rangeEnd));
         for (uint64_t key = 1; key <= 100; ++key) {
-            auto partitionKey = tell::commitmanager::HashRing<size_t>::getPartitionToken(table1.tableId(), key);
-            auto testTuple = GenericTuple({
-                std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
-                std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
-                std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-                std::make_pair<crossbow::string, boost::any>("text1", text1),
-                std::make_pair<crossbow::string, boost::any>("text2", text2)
-            });
+            if (key <= 30) {
+                auto partitionKey = HashRing<size_t>::getPartitionToken(table1.tableId(), key);
+                auto testTuple = GenericTuple({
+                    std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
+                    std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
+                    std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                    std::make_pair<crossbow::string, boost::any>("text1", text1),
+                    std::make_pair<crossbow::string, boost::any>("text2", text2)
+                });
 
-            if (key > 30) {
-                // LOG_INFO("\t-> Inserting into table 2");
-                auto insertFuture = client.insert(table2, key, *snapshot, testTuple);
+                LOG_INFO("\t-> table1: %1% (%2%)", writeHash(partitionKey), (partitionKey <= rangeEnd));
+
+                auto insertFuture = client.insert(table1, key, *snapshot, testTuple);
                 if (auto ec = insertFuture->error()) {
                     LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
                 }
             } else {
-                // LOG_INFO("\t-> Inserting into table 1");
-                auto insertFuture = client.insert(table1, key, *snapshot, testTuple);
+                auto partitionKey = HashRing<size_t>::getPartitionToken(table2.tableId(), key);
+                auto testTuple = GenericTuple({
+                    std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
+                    std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
+                    std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                    std::make_pair<crossbow::string, boost::any>("text1", text1),
+                    std::make_pair<crossbow::string, boost::any>("text2", text2)
+                });
+
+                LOG_INFO("\t-> table2: %1% (%2%)", writeHash(partitionKey), (partitionKey <= rangeEnd));
+
+                auto insertFuture = client.insert(table2, key, *snapshot, testTuple);
                 if (auto ec = insertFuture->error()) {
                     LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
                 }
@@ -171,7 +182,7 @@ std::function<void (ClientHandle&)> schemaTransfer(Storage& storage) {
     };
 }
 
-std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage, crossbow::string tableName, uint64_t rangeStart, uint64_t rangeEnd) {
+std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage, crossbow::string tableName, Hash rangeStart, Hash rangeEnd) {
     return [&manager, &config, &storage, &tableName, rangeStart, rangeEnd](ClientHandle& client) {
         // Allocate scan memory
         size_t scanMemoryLength = 0x80000000ull;
@@ -349,7 +360,7 @@ int main(int argc, const char** argv) {
         
         // Initialize and populate the remote nodes
 
-        auto initializeTx = initializeRemote();
+        auto initializeTx = initializeRemote(clusterMeta->ranges.front().start, clusterMeta->ranges.front().end);
         TransactionRunner::executeBlocking(clusterManager, initializeTx);
 
         // Perform the schema transfer
@@ -386,8 +397,8 @@ int main(int argc, const char** argv) {
                 }
             }
         }
-        LOG_ASSERT(tupleCount == 49, "Could not retrieve all tuples!");
         LOG_INFO("Found %1% tuples", tupleCount);
+        LOG_ASSERT(tupleCount == 50, "Could not retrieve all tuples!");
     }
     
     LOG_INFO("Initialize network server");
