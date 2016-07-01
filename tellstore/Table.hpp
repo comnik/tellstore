@@ -156,7 +156,7 @@ T Table::field(const crossbow::string& name, const char* data) const {
     } break;
 
     case FieldType::HASH128: {
-        value = *reinterpret_cast<const __int128*>(field);
+        value = *reinterpret_cast<const unsigned __int128*>(field);
     } break;
 
     case FieldType::FLOAT: {

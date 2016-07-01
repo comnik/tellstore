@@ -331,9 +331,9 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
                 memcpy(current, boost::any_cast<int64_t>(&(iter->second)), sizeof(int64_t));
             } break;
             case FieldType::HASH128: {
-                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(int64_t) == 0u,
+                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(uint64_t) == 0u,
                         "Pointer to field must be aligned");
-                memcpy(current, boost::any_cast<__int128>(&(iter->second)), sizeof(__int128));
+                memcpy(current, boost::any_cast<unsigned __int128>(&(iter->second)), sizeof(unsigned __int128));
             } break;
             case FieldType::FLOAT: {
                 LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(float) == 0u,

@@ -140,7 +140,7 @@ public:
         case FieldType::BIGINT:
             return sizeof(int64_t);
         case FieldType::HASH128:
-            return sizeof(__int128);    
+            return sizeof(unsigned __int128);    
         case FieldType::FLOAT:
             return sizeof(float);
         case FieldType::DOUBLE:
@@ -168,7 +168,7 @@ public:
         case FieldType::BIGINT:
             return alignof(int64_t);
         case FieldType::HASH128:
-            return alignof(__int128);
+            return alignof(unsigned __int128);
         case FieldType::FLOAT:
             return alignof(float);
         case FieldType::DOUBLE:

@@ -148,8 +148,14 @@ llvm::CmpInst::Predicate LLVMBuilder::getIntPredicate(PredicateType type) {
     case PredicateType::LESS_EQUAL:
         return CmpInst::ICMP_SLE;
 
+    case PredicateType::UNSIGNED_LESS_EQUAL:
+        return CmpInst::ICMP_ULE;
+
     case PredicateType::GREATER:
         return CmpInst::ICMP_SGT;
+
+    case PredicateType::UNSIGNED_GREATER:
+        return CmpInst::ICMP_UGT;
 
     case PredicateType::GREATER_EQUAL:
         return CmpInst::ICMP_SGE;

@@ -253,7 +253,7 @@ void ScanIterator::abort(std::error_code ec) {
 }
 
 void ClientSocket::connect(const crossbow::infinio::Endpoint& host, uint64_t threadNum) {
-    LOG_INFO("Connecting to TellStore server %1% on processor %2%", host, threadNum);
+    LOG_DEBUG("Connecting to TellStore server %1% on processor %2%", host, threadNum);
 
     auto data = handshakeString();
     data.append(reinterpret_cast<char*>(&threadNum), sizeof(uint64_t));
@@ -262,7 +262,7 @@ void ClientSocket::connect(const crossbow::infinio::Endpoint& host, uint64_t thr
 }
 
 void ClientSocket::shutdown() {
-    LOG_INFO("Shutting down TellStore connection");
+    LOG_DEBUG("Shutting down TellStore connection");
     crossbow::infinio::RpcClientSocket::shutdown();
 }
 

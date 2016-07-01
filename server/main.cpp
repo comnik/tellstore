@@ -44,12 +44,13 @@
 #include <iostream>
 
 using namespace tell::store;
+using namespace tell::commitmanager;
 
 // Scan queries have a fixed, known size
 const uint32_t SELECTION_LENGTH = 128;
 
 // Constructs a scan query that matches a specific key range
-std::unique_ptr<char[]> createKeyTransferQuery(Table table, __int128 rangeStart, __int128 rangeEnd) {
+std::unique_ptr<char[]> createKeyTransferQuery(Table table, Hash rangeStart, Hash rangeEnd) {
     std::unique_ptr<char[]> selection(new char[SELECTION_LENGTH]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), SELECTION_LENGTH);
@@ -85,8 +86,13 @@ std::unique_ptr<char[]> createKeyTransferQuery(Table table, __int128 rangeStart,
     return selection;
 }
 
-std::function<void (ClientHandle& client)> initializeRemote() {
-    return [](ClientHandle& client) {
+crossbow::string writeHash(Hash hash) {
+    uint64_t* value = (uint64_t*) &hash;
+    return crossbow::to_string(value[1]) + crossbow::to_string(value[0]);
+}
+
+std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Hash rangeEnd) {
+    return [rangeStart, rangeEnd](ClientHandle& client) {
         auto snapshot = client.startTransaction(TransactionType::READ_WRITE);
 
         Schema schema(TableType::TRANSACTIONAL);
@@ -316,7 +322,7 @@ int main(int argc, const char** argv) {
 
     LOG_INFO("Registering with commit-manager...");
 
-    std::unique_ptr<tell::commitmanager::ClusterMeta> clusterMeta;
+    std::unique_ptr<ClusterMeta> clusterMeta;
     TransactionRunner::executeBlocking(clusterManager, [&ib0addr, &clusterMeta](ClientHandle& client) { 
         clusterMeta = std::move(client.registerNode(ib0addr, "STORAGE"));
     });
@@ -329,9 +335,9 @@ int main(int argc, const char** argv) {
 
     for (auto range : clusterMeta->ranges) {
         if (range.owner == ib0addr) {
-            LOG_INFO("\t-> first owner of range [%1%, %2%]", (uint64_t) range.start, (uint64_t) range.end);
+            LOG_INFO("\t-> first owner of range [%1%, %2%]", writeHash(range.start), writeHash(range.end));
         } else {
-            LOG_INFO("\t-> request range [%1%, %2%] from %3%", (uint64_t) range.start, (uint64_t) range.end, range.owner);
+            LOG_INFO("\t-> request range [%1%, %2%] from %3%", writeHash(range.start), writeHash(range.end), range.owner);
             clusterConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
         }
     }

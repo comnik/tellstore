@@ -58,7 +58,9 @@ enum class PredicateType : uint8_t {
     POSTFIX_LIKE,
     POSTFIX_NOT_LIKE,
     IS_NULL,
-    IS_NOT_NULL
+    IS_NOT_NULL,
+    UNSIGNED_GREATER,
+    UNSIGNED_LESS_EQUAL
 };
 
 enum class AggregationType : uint8_t {

@@ -233,7 +233,7 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
 
                     case FieldType::HASH128: {
                         queryReader.advance(6);
-                        predicateAst.fixed.value = builder.getIntN(128, queryReader.read<__int128>());
+                        predicateAst.fixed.value = builder.getIntN(128, queryReader.read<unsigned __int128>());
                         predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
                         predicateAst.fixed.isFloat = false;
                     } break;
