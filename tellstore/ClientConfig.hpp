@@ -43,7 +43,7 @@ struct ClientConfig {
             : maxPendingResponses(48ull),
               maxBatchSize(16ull),
               numNetworkThreads(2ull),
-              numVirtualNodes(200) {
+              numVirtualNodes(1) { // @TODO
         infinibandConfig.receiveBufferCount = 256;
         infinibandConfig.sendBufferCount = 256;
         infinibandConfig.bufferLength = 128 * 1024;

@@ -387,7 +387,7 @@ int main(int argc, const char** argv) {
         };
 
         uint64_t tupleCount = 0;
-        for (uint64_t key = 1; key <= 50; ++key) {
+        for (uint64_t key = 1; key <= 100; ++key) {
             for (auto const& table : storage.getTables()) {
                 auto ec = storage.get(table->tableId(), key, *snapshot, tupleLocation);
                 if (ec == 0) {
@@ -398,7 +398,7 @@ int main(int argc, const char** argv) {
             }
         }
         LOG_INFO("Found %1% tuples", tupleCount);
-        LOG_ASSERT(tupleCount == 50, "Could not retrieve all tuples!");
+        LOG_ASSERT(tupleCount >= 50, "Could not retrieve all tuples!");
     }
     
     LOG_INFO("Initialize network server");
