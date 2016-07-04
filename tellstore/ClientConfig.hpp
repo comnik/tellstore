@@ -26,13 +26,16 @@
 #include <crossbow/infinio/InfinibandLimits.hpp>
 #include <crossbow/string.hpp>
 
+#include <commitmanager/HashRing.hpp>
+
 #include <cstdint>
 #include <vector>
 
 namespace tell {
 namespace store {
 
-struct ClientConfig {
+class ClientConfig {
+public:
     static crossbow::infinio::Endpoint parseCommitManager(const crossbow::string& host) {
         return crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), host);
     }
@@ -43,7 +46,9 @@ struct ClientConfig {
             : maxPendingResponses(48ull),
               maxBatchSize(16ull),
               numNetworkThreads(2ull),
-              numVirtualNodes(1) { // @TODO
+              numVirtualNodes(1),
+              mNodeRing(numVirtualNodes) {
+
         infinibandConfig.receiveBufferCount = 256;
         infinibandConfig.sendBufferCount = 256;
         infinibandConfig.bufferLength = 128 * 1024;
@@ -57,9 +62,6 @@ struct ClientConfig {
     /// Address of the CommitManager to connect to
     crossbow::infinio::Endpoint commitManager;
 
-    /// Address of the TellStore to connect to
-    std::vector<crossbow::infinio::Endpoint> tellStore;
-
     /// Maximum number of concurrent pending network requests (per connection)
     size_t maxPendingResponses;
 
@@ -71,6 +73,28 @@ struct ClientConfig {
 
     /// Number of virtual nodes assigned to each node in the hash ring
     size_t numVirtualNodes;
+
+    /// Current state of key distribution
+    commitmanager::HashRing<crossbow::string> mNodeRing;
+
+    // Returns the number of connected tellstore nodes
+    size_t numStores() const { return tellStore.size(); }
+
+    std::vector<crossbow::infinio::Endpoint> getStores() { return tellStore; }
+
+    void setStores(std::vector<crossbow::infinio::Endpoint> endpoints) {
+        for (auto& ep : endpoints) {
+            LOG_INFO("Inserting node %1% into hash ring", ep.getToken());
+            mNodeRing.insertNode(ep.getToken(), ep.getToken());
+        }
+
+        tellStore = endpoints;
+    }
+
+private:
+    /// Address of the TellStore to connect to
+    std::vector<crossbow::infinio::Endpoint> tellStore;    
+
 };
 
 std::vector<crossbow::infinio::Endpoint> ClientConfig::parseTellStore(const crossbow::string& host) {

@@ -183,24 +183,26 @@ std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table, const commi
             selection, queryLength, query);
 }
 
-BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
+BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, std::shared_ptr<ClientConfig> config,
         uint64_t processorNum)
-        : mProcessor(service.createProcessor()),
-          mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses, config.maxBatchSize),
-          mNodeRing(config.numVirtualNodes),
+        : mConfig(config),
+          mProcessor(service.createProcessor()),
+          mCommitManagerSocket(service.createSocket(*mProcessor), config->maxPendingResponses, config->maxBatchSize),
           mProcessorNum(processorNum),
           mScanId(0u) {
-    mCommitManagerSocket.connect(config.commitManager);
+    mCommitManagerSocket.connect(config->commitManager);
     
-    mTellStoreSocket.reserve(config.tellStore.size());
-    for (auto& ep : config.tellStore) {
-        mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), config.maxPendingResponses,
-                config.maxBatchSize));
-        mTellStoreSocket.back()->connect(ep, mProcessorNum);
+    mTellStoreSocket.reserve(config->numStores());
+    for (auto& ep : config->getStores()) {
+        std::unique_ptr<store::ClientSocket> socket(new ClientSocket(
+            service.createSocket(*mProcessor),
+            config->maxPendingResponses,
+            config->maxBatchSize
+        ));
 
-        // LOG_INFO("Inserting node %1% into hash ring", ep);
-        size_t idx = mTellStoreSocket.size() - 1;
-        mNodeRing.insertNode("localhost:7243", idx); // @TODO
+        socket->connect(ep, mProcessorNum);
+        
+        mTellStoreSocket[ep.getToken()] = std::move(socket);
     }
 }
 
@@ -210,8 +212,8 @@ void BaseClientProcessor::shutdown() {
     }
 
     mCommitManagerSocket.shutdown();
-    for (auto& socket : mTellStoreSocket) {
-        socket->shutdown();
+    for (auto& socketIt : mTellStoreSocket) {
+        socketIt.second->shutdown();
     }
 }
 
@@ -252,8 +254,8 @@ Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const cr
     // TODO Return a combined createTable future?
     std::vector<std::shared_ptr<CreateTableResponse>> requests;
     requests.reserve(mTellStoreSocket.size());
-    for (auto& socket : mTellStoreSocket) {
-        requests.emplace_back(socket->createTable(fiber, name, schema));
+    for (auto& socketIt : mTellStoreSocket) {
+        requests.emplace_back(socketIt.second->createTable(fiber, name, schema));
     }
     uint64_t tableId = 0u;
     for (auto& i : requests) {
@@ -271,17 +273,17 @@ std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber
     auto scanId = ++mScanId;
 
     auto iterator = std::make_shared<ScanIterator>(fiber, std::move(record), mTellStoreSocket.size());
-    for (auto& socket : mTellStoreSocket) {
+    for (auto& socketIt : mTellStoreSocket) {
         auto memory = memoryManager.acquire();
         if (!memory.valid()) {
             iterator->abort(std::make_error_code(std::errc::not_enough_memory));
             break;
         }
 
-        auto response = std::make_shared<ScanResponse>(fiber, iterator, *socket, std::move(memory), scanId);
+        auto response = std::make_shared<ScanResponse>(fiber, iterator, *socketIt.second, std::move(memory), scanId);
         iterator->addScanResponse(response);
 
-        socket->scanStart(scanId, std::move(response), tableId, queryType, selectionLength, selection, queryLength,
+        socketIt.second->scanStart(scanId, std::move(response), tableId, queryType, selectionLength, selection, queryLength,
                 query, snapshot);
     }
     return iterator;

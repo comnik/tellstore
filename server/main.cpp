@@ -36,12 +36,14 @@
 #include <commitmanager/HashRing.hpp>
 
 #include <crossbow/allocator.hpp>
+#include <crossbow/infinio/Endpoint.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
 #include <crossbow/program_options.hpp>
 #include <crossbow/string.hpp>
 
 #include <iostream>
+#include <vector>
 
 using namespace tell::store;
 using namespace tell::commitmanager;
@@ -182,13 +184,13 @@ std::function<void (ClientHandle&)> schemaTransfer(Storage& storage) {
     };
 }
 
-std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, ClientConfig& config, Storage& storage, crossbow::string tableName, Hash rangeStart, Hash rangeEnd) {
+std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, std::shared_ptr<ClientConfig> config, Storage& storage, crossbow::string tableName, Hash rangeStart, Hash rangeEnd) {
     return [&manager, &config, &storage, &tableName, rangeStart, rangeEnd](ClientHandle& client) {
         // Allocate scan memory
         size_t scanMemoryLength = 0x80000000ull;
         std::unique_ptr<ScanMemoryManager> scanMemory = manager.allocateScanMemory(
-            config.tellStore.size(),
-            scanMemoryLength / config.tellStore.size()
+            config->numStores(),
+            scanMemoryLength / config->numStores()
         );
 
         try {
@@ -324,8 +326,8 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initialize network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
 
-    ClientConfig clusterConfig;
-    clusterConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
+    auto clusterConfig = std::make_shared<ClientConfig>();
+    clusterConfig->commitManager = ClientConfig::parseCommitManager(directoryHost);
 
     ClientManager<void> clusterManager(clusterConfig);
 
@@ -344,16 +346,21 @@ int main(int argc, const char** argv) {
 
     // For this, we treat the set of current owners we need to contact, as a new cluster.
 
+    std::vector<crossbow::infinio::Endpoint> owners;
+    owners.reserve(clusterMeta->ranges.size());
+
     for (auto range : clusterMeta->ranges) {
         if (range.owner == ib0addr) {
             LOG_INFO("\t-> first owner of range [%1%, %2%]", writeHash(range.start), writeHash(range.end));
         } else {
             LOG_INFO("\t-> request range [%1%, %2%] from %3%", writeHash(range.start), writeHash(range.end), range.owner);
-            clusterConfig.tellStore.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
+            owners.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
         }
     }
 
-    if (clusterConfig.tellStore.size() > 0) {
+    clusterConfig->setStores(owners);
+
+    if (clusterConfig->numStores() > 0) {
         // Re-initialize the ClientManager
         
         ClientManager<void> clusterManager(clusterConfig);

@@ -158,11 +158,11 @@ public:
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
 
     std::shared_ptr<GetTablesResponse> getTables(crossbow::infinio::Fiber& fiber) {
-        return mTellStoreSocket.at(0)->getTables(fiber);
+        return mTellStoreSocket.begin()->second->getTables(fiber);
     }
 
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name) {
-        return mTellStoreSocket.at(0)->getTable(fiber, name);
+        return mTellStoreSocket.begin()->second->getTable(fiber, name);
     }
 
     std::shared_ptr<ClusterResponse<GetResponse>> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
@@ -197,7 +197,7 @@ public:
 
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service,
-                        const ClientConfig& config,
+                        std::shared_ptr<ClientConfig> config,
                         uint64_t processorNum);
 
     ~BaseClientProcessor() = default;
@@ -213,10 +213,9 @@ private:
      * @brief The socket associated with the shard for the given table and key
      */
     store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
-        // TODO Change getNode to return a size_t directly if we definitely don't need to store any other node information in the ring.
-        const size_t* nodeId = mNodeRing.getNode(tableId, key);
-        if (nodeId != nullptr) {
-            return mTellStoreSocket.at(*nodeId).get();
+        const crossbow::string* nodeToken = mConfig->mNodeRing.getNode(tableId, key);
+        if (nodeToken != nullptr) {
+            return mTellStoreSocket[*nodeToken].get();
         } else {
             // no cluster information available
             LOG_INFO("No cluster information available!");
@@ -228,10 +227,9 @@ private:
      * @brief The socket associated with the shard for the given partition token
      */
     store::ClientSocket* shard(commitmanager::Hash partitionToken) {
-        // TODO Change getNode to return a size_t directly if we definitely don't need to store any other node information in the ring.
-        const size_t* nodeId = mNodeRing.getNode(partitionToken);
-        if (nodeId != nullptr) {
-            return mTellStoreSocket.at(*nodeId).get();
+        const crossbow::string* nodeToken = mConfig->mNodeRing.getNode(partitionToken);
+        if (nodeToken != nullptr) {
+            return mTellStoreSocket[*nodeToken].get();
         } else {
             // no cluster information available
             LOG_INFO("No cluster information available!");
@@ -244,7 +242,7 @@ private:
      */
     template <class Response>
     std::shared_ptr<ClusterResponse<Response>> withSharding(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key, RequestFn<Response> reqFn) {
-        commitmanager::Hash partitionToken = commitmanager::HashRing<size_t>::getPartitionToken(tableId, key);
+        commitmanager::Hash partitionToken = commitmanager::HashRing<crossbow::string>::getPartitionToken(tableId, key);
         // Define the full request
         std::function<std::shared_ptr<ClusterResponse<Response>> ()> req = [this, &req, &fiber, &partitionToken, &reqFn] () {
             // Try to find a node to fullfil this request
@@ -278,13 +276,12 @@ private:
         return req();
     }
 
+    std::shared_ptr<ClientConfig> mConfig;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
     commitmanager::ClientSocket mCommitManagerSocket;
-    std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
-
-    commitmanager::HashRing<size_t> mNodeRing;
+    std::unordered_map<crossbow::string, std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
     std::atomic_flag mRequestIsPending = ATOMIC_FLAG_INIT;
     std::atomic<tell::commitmanager::ClusterStateResponse*> mPendingClusterStatusReq;
@@ -301,7 +298,7 @@ template <typename Context>
 class ClientProcessor : public BaseClientProcessor {
 public:
     template <typename... Args>
-    ClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config, uint64_t processorNum,
+    ClientProcessor(crossbow::infinio::InfinibandService& service, std::shared_ptr<ClientConfig> config, uint64_t processorNum,
             Args&&... contextArgs)
             : BaseClientProcessor(service, config, processorNum),
               mTransactionCount(0),
@@ -355,7 +352,7 @@ template <typename Context>
 class ClientManager : crossbow::non_copyable, crossbow::non_movable {
 public:
     template <typename... Args>
-    ClientManager(const ClientConfig& config, Args... contextArgs);
+    ClientManager(std::shared_ptr<ClientConfig> config, Args... contextArgs);
     ~ClientManager();
 
     void shutdown();
@@ -382,8 +379,8 @@ private:
 
 template <typename Context>
 template <typename... Args>
-ClientManager<Context>::ClientManager(const ClientConfig& config, Args... contextArgs)
-        : mService(config.infinibandConfig) {
+ClientManager<Context>::ClientManager(std::shared_ptr<ClientConfig> config, Args... contextArgs)
+        : mService(config->infinibandConfig) {
     LOG_INFO("Starting client manager");
 
     // TODO Move the service thread into the Infiniband Service itself
@@ -391,8 +388,8 @@ ClientManager<Context>::ClientManager(const ClientConfig& config, Args... contex
         mService.run();
     });
 
-    mProcessor.reserve(config.numNetworkThreads);
-    for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
+    mProcessor.reserve(config->numNetworkThreads);
+    for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
         mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
     }
 
