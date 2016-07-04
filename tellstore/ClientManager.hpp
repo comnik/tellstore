@@ -51,6 +51,7 @@
 #include <tuple>
 #include <type_traits>
 #include <vector>
+#include <unordered_map>
 
 namespace tell {
 namespace store {
@@ -357,6 +358,9 @@ public:
 
     void shutdown();
 
+    template <typename... Args>
+    void reloadConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs);
+
     template <typename Fun>
     void execute(Fun fun);
 
@@ -388,10 +392,7 @@ ClientManager<Context>::ClientManager(std::shared_ptr<ClientConfig> config, Args
         mService.run();
     });
 
-    mProcessor.reserve(config->numNetworkThreads);
-    for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
-    }
+    reloadConfig(config, contextArgs...);
 
     LOG_INFO("Succesfully started client manager");
 }
@@ -401,6 +402,26 @@ ClientManager<Context>::~ClientManager() {
     LOG_INFO("Destroying client manager");
     shutdown();
     mServiceThread.detach();
+}
+
+template <typename Context>
+template <typename... Args>
+void ClientManager<Context>::reloadConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs) {
+    LOG_INFO("Reloading config...");
+
+    if (mProcessor.size() > 0) {
+        // Have to shutdown any existing connections first
+        for (auto& proc : mProcessor) {
+            proc->shutdown();
+        }
+    }
+
+    mProcessor.reserve(config->numNetworkThreads);
+    for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
+        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
+    }
+
+    LOG_INFO("Successfully reloaded config.");
 }
 
 template <typename Context>

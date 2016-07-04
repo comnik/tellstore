@@ -363,7 +363,7 @@ int main(int argc, const char** argv) {
     if (clusterConfig->numStores() > 0) {
         // Re-initialize the ClientManager
         
-        ClientManager<void> clusterManager(clusterConfig);
+        clusterManager.reloadConfig(clusterConfig);
         
         // Initialize and populate the remote nodes
 

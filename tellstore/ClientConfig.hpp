@@ -83,6 +83,8 @@ public:
     std::vector<crossbow::infinio::Endpoint> getStores() { return tellStore; }
 
     void setStores(std::vector<crossbow::infinio::Endpoint> endpoints) {
+        mNodeRing.clear();
+        
         for (auto& ep : endpoints) {
             LOG_INFO("Inserting node %1% into hash ring", ep.getToken());
             mNodeRing.insertNode(ep.getToken(), ep.getToken());

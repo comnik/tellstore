@@ -22,6 +22,7 @@
  */
 #pragma once
 
+#include <tellstore/ClientConfig.hpp>
 #include <tellstore/ErrorCode.hpp>
 #include <tellstore/MessageTypes.hpp>
 #include <tellstore/GenericTuple.hpp>
@@ -63,21 +64,18 @@ class ClusterResponse final {
 public:
     using RequestClosure = std::function<std::shared_ptr<ClusterResponse<ResponseType>>()>;
 
+    // Fast-path constructor
     ClusterResponse(std::shared_ptr<ResponseType> resp) : mFuture(resp) {}
-    ClusterResponse(std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
-                    RequestClosure req) : mFuture(req),
+    
+    // Constructor with retries
+    ClusterResponse(std::shared_ptr<ClientConfig> config,
+                    std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
+                    RequestClosure req) : mConfig(config),
+                                          mFuture(req),
                                           mStatusResponse(statusResp) {}
 
     std::shared_ptr<ResponseType> get ();
-    /*std::shared_ptr<ResponseType> get () {
-        if (mFuture.which() == 1) {
-            // First we have to wait for the cluster state request to finish
-            mStatusResponse->waitForResult();
-        }
-
-        return boost::apply_visitor(future_visitor(), mFuture);
-    }*/
-
+    
 private:
     class future_visitor : public boost::static_visitor<std::shared_ptr<ResponseType>> {
     public:
@@ -89,7 +87,10 @@ private:
         }
     };
 
+    std::shared_ptr<ClientConfig> mConfig;
+
     boost::variant<std::shared_ptr<ResponseType>, RequestClosure> mFuture;
+    
     std::shared_ptr<commitmanager::ClusterStateResponse> mStatusResponse;
 };
 
