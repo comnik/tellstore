@@ -254,7 +254,7 @@ private:
                 // std::shared_ptr<commitmanager::ClusterStateResponse> statusResp;
                 // if (mRequestIsPending.test_and_set()) {
                     // We are the first thread to perform the request
-                    auto statusResp = mCommitManagerSocket.registerNode(fiber, "@TODO", "STORAGE");
+                    auto statusResp = mCommitManagerSocket.registerNode(fiber, "@TODO", "PROCESSING");
                     // mPendingClusterStatusReq.store(statusResp.get());
                 // } else {
                     // There is a already a request pending
