@@ -456,6 +456,7 @@ void ClientSocket::scanProgress(uint16_t scanId, std::shared_ptr<ScanResponse> r
 }
 
 template class ClusterResponse<GetResponse>;
+template class ClusterResponse<ModificationResponse>;
 
 } // namespace store
 } // namespace tell

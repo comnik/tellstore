@@ -142,6 +142,9 @@ private:
  */
 class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
+    template <class Response>
+    using RequestFn = std::function<std::shared_ptr<Response> (store::ClientSocket& node)>; 
+
     void shutdown();
 
     std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::infinio::Fiber& fiber, crossbow::string host, crossbow::string tag);
@@ -164,58 +167,27 @@ public:
 
     std::shared_ptr<ClusterResponse<GetResponse>> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        // Try to get a node for this request
-        auto node = shard(tableId, key);
-
-        if (node == nullptr) {
-            // Cluster information is not available
-            // Remember what we wanted to do
-            auto req = [this, &fiber, tableId, key, &snapshot] () -> std::shared_ptr<GetResponse> {
-                // TODO: What do we do here, if cluster information still not available for some reason?
-                auto node = shard(tableId, key);
-                return node->get(fiber, tableId, key, snapshot);
-            };
-
-            // Perform the ClusterStatusRequest
-            // std::shared_ptr<commitmanager::ClusterStateResponse> statusResp;
-            // if (mRequestIsPending.test_and_set()) {
-                // We are the first thread to perform the request
-                auto statusResp = mCommitManagerSocket.registerNode(fiber, "@TODO", "STORAGE");
-                // mPendingClusterStatusReq.store(statusResp.get());
-            // } else {
-                // There is a already a request pending
-                // TODO Continue here. Somehow we have to be sure mPendingClusterStatusReq is already set.
-                // while (mPendingClusterStatusReq)
-                // statusResp = std::make_shared<commitmanager::ClusterStateResponse>(mPendingClusterStatusReq.load());
-            // }
-
-            // Let the ClusterResponse perform a cluster state request first, retry afterwards
-            return std::make_shared<ClusterResponse<GetResponse>>(statusResp, req);
-        } else {
-            // Fast path, return a proper GetResponse immediately
-            auto getResponse = node->get(fiber, tableId, key, snapshot);
-            return std::make_shared<ClusterResponse<GetResponse>>(getResponse);
-        }
+        return withSharding<GetResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.get(fiber, tableId, key, snapshot); });
     }
 
-    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ClusterResponse<ModificationResponse>> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
+        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.insert(fiber, tableId, key, snapshot, tuple); });
     }
 
-    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ClusterResponse<ModificationResponse>> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
+        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.update(fiber, tableId, key, snapshot, tuple); });
     }
 
-    std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ClusterResponse<ModificationResponse>> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
+        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.remove(fiber, tableId, key, snapshot); });
     }
 
-    std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ClusterResponse<ModificationResponse>> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
+        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.revert(fiber, tableId, key, snapshot); });
     }
 
     std::shared_ptr<ScanIterator> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
@@ -251,6 +223,61 @@ private:
             return nullptr;
         }
     }
+
+    /**
+     * @brief The socket associated with the shard for the given partition token
+     */
+    store::ClientSocket* shard(commitmanager::Hash partitionToken) {
+        // TODO Change getNode to return a size_t directly if we definitely don't need to store any other node information in the ring.
+        const size_t* nodeId = mNodeRing.getNode(partitionToken);
+        if (nodeId != nullptr) {
+            return mTellStoreSocket.at(*nodeId).get();
+        } else {
+            // no cluster information available
+            LOG_INFO("No cluster information available!");
+            return nullptr;
+        }
+    }
+
+    /**
+     * @brief Performs and potentially retries a sharded request.
+     */
+    template <class Response>
+    std::shared_ptr<ClusterResponse<Response>> withSharding(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key, RequestFn<Response> reqFn) {
+        commitmanager::Hash partitionToken = commitmanager::HashRing<size_t>::getPartitionToken(tableId, key);
+        // Define the full request
+        std::function<std::shared_ptr<ClusterResponse<Response>> ()> req = [this, &req, &fiber, &partitionToken, &reqFn] () {
+            // Try to find a node to fullfil this request
+            auto node = shard(partitionToken);
+
+            if (node == nullptr) {
+                // Cluster information is not available. We have to perform a ClusterStatusRequest first.
+
+                // std::shared_ptr<commitmanager::ClusterStateResponse> statusResp;
+                // if (mRequestIsPending.test_and_set()) {
+                    // We are the first thread to perform the request
+                    auto statusResp = mCommitManagerSocket.registerNode(fiber, "@TODO", "STORAGE");
+                    // mPendingClusterStatusReq.store(statusResp.get());
+                // } else {
+                    // There is a already a request pending
+                    // TODO Continue here. Somehow we have to be sure mPendingClusterStatusReq is already set.
+                    // while (mPendingClusterStatusReq)
+                    // statusResp = std::make_shared<commitmanager::ClusterStateResponse>(mPendingClusterStatusReq.load());
+                // }
+
+                // Return a future that waits for the statusResp and retries this request
+                return std::make_shared<ClusterResponse<Response>>(statusResp, req);
+            } else {
+                // Fast path, return a proper response immediately
+                std::shared_ptr<Response> resp = reqFn(*node);
+                return std::make_shared<ClusterResponse<Response>>(resp);
+            }
+        };
+
+        // Start the procedure
+        return req();
+    }
+
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 

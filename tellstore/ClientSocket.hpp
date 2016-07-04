@@ -61,7 +61,7 @@ class ScanIterator;
 template <class ResponseType>
 class ClusterResponse final {
 public:
-    using RequestClosure = std::function<std::shared_ptr<ResponseType>()>;
+    using RequestClosure = std::function<std::shared_ptr<ClusterResponse<ResponseType>>()>;
 
     ClusterResponse(std::shared_ptr<ResponseType> resp) : mFuture(resp) {}
     ClusterResponse(std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
@@ -85,7 +85,7 @@ private:
 
         std::shared_ptr<ResponseType> operator () (RequestClosure req) const {
             // Retry the original request
-            return req();
+            return req()->get();
         }
     };
 
@@ -185,7 +185,6 @@ private:
     void processResponse(crossbow::buffer_reader& message);
 };
 
-// using GetResponse = ClusterResponse<GetResponse>;
 
 /**
  * @brief Response for a Modificatoin (insert, update, remove, revert) request
@@ -377,6 +376,7 @@ public:
 };
 
 extern template class ClusterResponse<GetResponse>;
+extern template class ClusterResponse<ModificationResponse>;
 
 } // namespace store
 } // namespace tell

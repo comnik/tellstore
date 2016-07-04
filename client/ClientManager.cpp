@@ -80,16 +80,16 @@ std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key)
 
     auto snapshot = createNonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
 
-    auto clusterResponse = mProcessor.get(mFiber, table.tableId(), key, *snapshot);
-    return clusterResponse->get();
+    auto clusterResp = mProcessor.get(mFiber, table.tableId(), key, *snapshot);
+    return clusterResp->get();
 }
 
 std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key,
         const commitmanager::SnapshotDescriptor& snapshot) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    auto clusterResponse = mProcessor.get(mFiber, table.tableId(), key, snapshot);
-    return clusterResponse->get();
+    auto clusterResp = mProcessor.get(mFiber, table.tableId(), key, snapshot);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key, uint64_t version,
@@ -103,7 +103,8 @@ std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, u
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    return mProcessor.insert(mFiber, table.tableId(), key, *snapshot, tuple);
+    auto clusterResp = mProcessor.insert(mFiber, table.tableId(), key, *snapshot, tuple);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key,
@@ -116,7 +117,8 @@ std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, u
         const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.insert(mFiber, table.tableId(), key, snapshot, tuple);
+    auto clusterResp = mProcessor.insert(mFiber, table.tableId(), key, snapshot, tuple);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key, uint64_t version,
@@ -130,7 +132,8 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, u
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    return mProcessor.update(mFiber, table.tableId(), key, *snapshot, tuple);
+    auto clusterResp = mProcessor.update(mFiber, table.tableId(), key, *snapshot, tuple);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key,
@@ -143,28 +146,32 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, u
         const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.update(mFiber, table.tableId(), key, snapshot, tuple);
+    auto clusterResp = mProcessor.update(mFiber, table.tableId(), key, snapshot, tuple);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, uint64_t key, uint64_t version) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
+    auto clusterResp = mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, uint64_t key,
         const commitmanager::SnapshotDescriptor& snapshot) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.remove(mFiber, table.tableId(), key, snapshot);
+    auto clusterResp = mProcessor.remove(mFiber, table.tableId(), key, snapshot);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::revert(const Table& table, uint64_t key,
         const commitmanager::SnapshotDescriptor& snapshot) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.revert(mFiber, table.tableId(), key, snapshot);
+    auto clusterResp = mProcessor.revert(mFiber, table.tableId(), key, snapshot);
+    return clusterResp->get();
 }
 
 std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table, const commitmanager::SnapshotDescriptor& snapshot,
