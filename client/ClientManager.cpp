@@ -183,15 +183,19 @@ std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table, const commi
             selection, queryLength, query);
 }
 
-BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, std::shared_ptr<ClientConfig> config,
-        uint64_t processorNum)
-        : mConfig(config),
-          mProcessor(service.createProcessor()),
-          mCommitManagerSocket(service.createSocket(*mProcessor), config->maxPendingResponses, config->maxBatchSize),
-          mProcessorNum(processorNum),
-          mScanId(0u) {
+BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service,
+                                         std::shared_ptr<ClientConfig> config,
+                                         ConfigUpdateHandler configUpdateHandler,
+                                         uint64_t processorNum) 
+    : mConfig(config),
+      mConfigUpdateHandler(configUpdateHandler),
+      mProcessor(service.createProcessor()),
+      mCommitManagerSocket(service.createSocket(*mProcessor), config->maxPendingResponses, config->maxBatchSize),
+      mProcessorNum(processorNum),
+      mScanId(0u) {
+
     mCommitManagerSocket.connect(config->commitManager);
-    
+
     mTellStoreSocket.reserve(config->numStores());
     for (auto& ep : config->getStores()) {
         std::unique_ptr<store::ClientSocket> socket(new ClientSocket(

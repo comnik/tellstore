@@ -55,6 +55,8 @@ class AbstractTuple;
 class ClientSocket;
 class ScanIterator;
 
+using ConfigUpdateHandler = std::function<void (std::unique_ptr<commitmanager::ClusterMeta>)>;
+
 /**
 * @brief Response wrapper that encpasulates a possible cluster status request,
 *        if the local cluster configuration is missing.
@@ -68,9 +70,9 @@ public:
     ClusterResponse(std::shared_ptr<ResponseType> resp) : mFuture(resp) {}
     
     // Constructor with retries
-    ClusterResponse(std::shared_ptr<ClientConfig> config,
+    ClusterResponse(ConfigUpdateHandler configUpdateHandler,
                     std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
-                    RequestClosure req) : mConfig(config),
+                    RequestClosure req) : mConfigUpdateHandler(configUpdateHandler),
                                           mFuture(req),
                                           mStatusResponse(statusResp) {}
 
@@ -87,7 +89,7 @@ private:
         }
     };
 
-    std::shared_ptr<ClientConfig> mConfig;
+    ConfigUpdateHandler mConfigUpdateHandler;
 
     boost::variant<std::shared_ptr<ResponseType>, RequestClosure> mFuture;
     

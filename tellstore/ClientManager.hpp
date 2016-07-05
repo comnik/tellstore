@@ -60,6 +60,8 @@ struct ClientConfig;
 class BaseClientProcessor;
 class Record;
 
+using ConfigUpdateHandler = std::function<void (std::unique_ptr<commitmanager::ClusterMeta>)>;
+
 /**
  * @brief Class to interact with the TellStore from within a fiber
  */
@@ -199,6 +201,7 @@ public:
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service,
                         std::shared_ptr<ClientConfig> config,
+                        const ConfigUpdateHandler configUpdateHandler,
                         uint64_t processorNum);
 
     ~BaseClientProcessor() = default;
@@ -265,7 +268,7 @@ private:
                 // }
 
                 // Return a future that waits for the statusResp and retries this request
-                return std::make_shared<ClusterResponse<Response>>(statusResp, req);
+                return std::make_shared<ClusterResponse<Response>>(this->mConfigUpdateHandler, statusResp, req);
             } else {
                 // Fast path, return a proper response immediately
                 std::shared_ptr<Response> resp = reqFn(*node);
@@ -278,6 +281,9 @@ private:
     }
 
     std::shared_ptr<ClientConfig> mConfig;
+
+    // What to do on configuration changes
+    const ConfigUpdateHandler mConfigUpdateHandler;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
@@ -299,12 +305,14 @@ template <typename Context>
 class ClientProcessor : public BaseClientProcessor {
 public:
     template <typename... Args>
-    ClientProcessor(crossbow::infinio::InfinibandService& service, std::shared_ptr<ClientConfig> config, uint64_t processorNum,
-            Args&&... contextArgs)
-            : BaseClientProcessor(service, config, processorNum),
-              mTransactionCount(0),
-              mContext(std::forward<Args>(contextArgs)...) {
-    }
+    ClientProcessor(crossbow::infinio::InfinibandService& service,
+                    std::shared_ptr<ClientConfig> config,
+                    const ConfigUpdateHandler configUpdateHandler,
+                    uint64_t processorNum,
+                    Args&&... contextArgs)
+        : BaseClientProcessor(service, config, configUpdateHandler, processorNum),
+          mTransactionCount(0),
+          mContext(std::forward<Args>(contextArgs)...) {}
 
     uint64_t transactionCount() const {
         return mTransactionCount.load();
@@ -416,9 +424,17 @@ void ClientManager<Context>::reloadConfig(std::shared_ptr<ClientConfig> config, 
         }
     }
 
+    // This handler will be called by ClusterResponse futures,
+    // whenever they have to request new cluster information from the commit-manager.
+    auto configUpdateHandler = [this, &config, &contextArgs...] (std::unique_ptr<commitmanager::ClusterMeta> clusterMeta) { 
+        // Update configuration with the new stores
+        config->setStores(ClientConfig::parseTellStore(clusterMeta->hosts));
+        this->reloadConfig(config, contextArgs...); 
+    };
+
     mProcessor.reserve(config->numNetworkThreads);
     for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
+        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, configUpdateHandler, i, contextArgs...));
     }
 
     LOG_INFO("Successfully reloaded config.");
