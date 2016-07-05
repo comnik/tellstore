@@ -54,6 +54,10 @@ void ClientHandle::unregisterNode(crossbow::string host) {
     return mProcessor.unregisterNode(mFiber, host);
 }
 
+void ClientHandle::transferOwnership(crossbow::string fromHost, crossbow::string toHost, std::vector<commitmanager::Partition> ranges) {
+    return mProcessor.transferOwnership(mFiber, fromHost, toHost, ranges);
+}
+
 std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransaction(
         TransactionType type /* = TransactionType::READ_WRITE */) {
     return mProcessor.start(mFiber, type);
@@ -235,6 +239,17 @@ void BaseClientProcessor::unregisterNode(crossbow::infinio::Fiber& fiber, crossb
         LOG_ERROR("Error while unregistering [error = %1% %2%]", ec, ec.message());
     }
     unregisterResponse->get();
+}
+
+void BaseClientProcessor::transferOwnership(crossbow::infinio::Fiber& fiber,
+                                            crossbow::string fromHost,
+                                            crossbow::string toHost,
+                                            std::vector<commitmanager::Partition> ranges) {
+    auto resp = mCommitManagerSocket.transferOwnership(fiber, fromHost, toHost, ranges);
+    if (auto& ec = resp->error()) {
+        LOG_ERROR("Error while transfering ownership [error = %1% %2%]", ec, ec.message());
+    }
+    resp->get();
 }
 
 std::unique_ptr<commitmanager::SnapshotDescriptor> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber,
