@@ -66,6 +66,9 @@ enum errors {
 
     /// Write operation unable to complete.
     invalid_write,
+
+    /// Requested key not in any of the nodes partitions.
+    not_responsible,
 };
 
 /**
@@ -111,6 +114,9 @@ public:
 
         case invalid_write:
             return "Write operation unable to complete";
+
+        case not_responsible:
+            return "Node not responsible for this key";
 
         default:
             return "tell.store.server error";

@@ -25,6 +25,8 @@
 
 #include <util/PageManager.hpp>
 
+#include <commitmanager/HashRing.hpp>
+
 #include <tellstore/ErrorCode.hpp>
 #include <tellstore/MessageTypes.hpp>
 
@@ -211,6 +213,14 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
         });
 
         if (ec) {
+            if (ec == error::errors::not_found || ec == error::errors::not_in_snapshot) {
+                if (!this->isResponsible(tableId, key)) {
+                    // We are not responsible for this key, this probably was not a real error -> redirect
+                    writeErrorResponse(messageId, error::errors::not_responsible);
+                    return;
+                }
+            } 
+            
             writeErrorResponse(messageId, static_cast<error::errors>(ec));
             return;
         }

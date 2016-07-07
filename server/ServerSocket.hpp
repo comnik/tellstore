@@ -127,6 +127,20 @@ public:
 private:
     friend Base;
 
+    /**
+     * Checks wether the given key lies in any of the nodes partitions.
+     */
+    bool isResponsible(uint64_t tableId, uint64_t key) {
+        commitmanager::Hash partitionToken = HashRing<crossbow::string>::getPartitionToken(tableId, key);
+        for (const auto& partition : *mPartitions) {
+            if (partitionToken >= partition->start && partitionToken <= partition->end) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     void onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType, crossbow::buffer_reader& message);
 
     /**
