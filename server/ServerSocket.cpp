@@ -95,6 +95,10 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
         handleScanProgress(messageId, request);
     } break;
 
+    case crossbow::to_underlying(RequestType::KEY_TRANSFER): {
+        handleKeyTransfer(messageId, request);
+    } break;
+
     case crossbow::to_underlying(RequestType::COMMIT): {
         // TODO Implement commit logic
     } break;
@@ -337,6 +341,29 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
     i->second->requestProgress(offsetRead);
 }
 
+void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
+    commitmanager::Hash rangeStart = request.read<commitmanager::Hash>();
+    commitmanager::Hash rangeEnd = request.read<commitmanager::Hash>();
+
+    auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
+
+    for (auto& partition : *mPartitions) {
+        if (rangeStart >= partition->start && rangeEnd <= partition->end) {
+            LOG_INFO("Starting key transfer %1%...", scanId);
+
+            partition->transferId = scanId;
+            partition->isBeingTransferred.store(true);
+
+            handleScan(messageId, request);
+            return;
+        }
+    }
+
+    // No matching partition found
+    LOG_ERROR("Transfer of unknown partition requested");
+    writeErrorResponse(messageId, error::invalid_scan);
+}
+
 void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
     // TODO We have to propagate the error to the ServerScanQuery so we can detach the scan
     if (ec) {
@@ -366,8 +393,19 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         }
 
         LOG_DEBUG("Scan with ID %1% finished", scanId);
+
         i->second->completeScan();
         mScans.erase(i);
+
+        for (auto& partition : *mPartitions) {
+            if (partition->isBeingTransferred && scanId == partition->transferId) {
+                // @TODO notify commit manager
+
+                LOG_INFO("Key transfer %1% succeeded", partition->transferId);
+                partition->isBeingTransferred.store(false);
+                // mPartitions.erase(partition);
+            }
+        }
     } break;
 
     default: {
@@ -428,15 +466,26 @@ void ServerSocket::writeModificationResponse(crossbow::infinio::MessageId messag
     }
 }
 
-ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Storage& storage,
-        const ServerConfig& config)
+ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
+                             Storage& storage,
+                             const ServerConfig& config,
+                             std::unique_ptr<commitmanager::ClusterMeta> clusterMeta)
         : Base(service, config.port),
           mStorage(storage),
           mMaxBatchSize(config.maxBatchSize),
           mScanBufferManager(service, config),
           mMaxInflightScanBuffer(config.maxInflightScanBuffer) {
+    
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessors.emplace_back(service.createProcessor());
+    }
+
+    mPartitions = std::make_shared<Partitions>();
+    mPartitions->reserve(clusterMeta->ranges.size());
+
+    for (const auto& range : clusterMeta->ranges) {
+        std::unique_ptr<Partition> partition(new Partition(range.start, range.end));
+        mPartitions->push_back(std::move(partition));
     }
 }
 
@@ -453,7 +502,15 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
     auto& processor = *mProcessors.at(thread % mProcessors.size());
 
     LOG_INFO("%1%] New client connection on processor %2%", socket->remoteAddress(), thread);
-    return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxBatchSize, mMaxInflightScanBuffer);
+    return new ServerSocket(
+        *this,
+        mPartitions, 
+        mStorage, 
+        processor, 
+        std::move(socket), 
+        mMaxBatchSize, 
+        mMaxInflightScanBuffer
+    );
 }
 
 } // namespace store

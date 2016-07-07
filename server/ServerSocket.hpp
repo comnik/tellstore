@@ -27,6 +27,7 @@
 #include "Storage.hpp"
 
 #include <commitmanager/SnapshotDescriptor.hpp>
+#include <commitmanager/MessageTypes.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
@@ -43,6 +44,22 @@ namespace store {
 
 class ServerManager;
 
+
+struct Partition {
+    commitmanager::Hash start;
+    commitmanager::Hash end;
+    std::atomic<bool> isBeingTransferred;
+    uint16_t transferId;
+
+    Partition (commitmanager::Hash start, commitmanager::Hash end)
+        : start(start),
+          end(end) {}
+};
+
+
+using Partitions = std::vector<std::unique_ptr<Partition>>;
+
+
 /**
  * @brief Handles communication with one TellStore client
  *
@@ -52,9 +69,15 @@ class ServerSocket : public crossbow::infinio::RpcServerSocket<ServerManager, Se
     using Base = crossbow::infinio::RpcServerSocket<ServerManager, ServerSocket>;
 
 public:
-    ServerSocket(ServerManager& manager, Storage& storage, crossbow::infinio::InfinibandProcessor& processor,
-            crossbow::infinio::InfinibandSocket socket, size_t maxBatchSize, uint64_t maxInflightScanBuffer)
+    ServerSocket(ServerManager& manager,
+                 std::shared_ptr<Partitions> partitions,
+                 Storage& storage, 
+                 crossbow::infinio::InfinibandProcessor& processor,
+                 crossbow::infinio::InfinibandSocket socket, 
+                 size_t maxBatchSize, 
+                 uint64_t maxInflightScanBuffer)
             : Base(manager, processor, std::move(socket), crossbow::string(), maxBatchSize),
+              mPartitions(partitions),
               mStorage(storage),
               mMaxInflightScanBuffer(maxInflightScanBuffer),
               mInflightScanBuffer(0u) {
@@ -225,6 +248,7 @@ private:
      * - x bytes: Snapshot descriptor
      */
     void handleScan(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
+    void handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The scan progress request has the following format:
@@ -271,6 +295,8 @@ private:
      */
     void writeModificationResponse(crossbow::infinio::MessageId messageId, int ec);
 
+    std::shared_ptr<Partitions> mPartitions;
+
     Storage& mStorage;
 
     /// Maximum number of scan buffers that are in flight on the socket at the same time
@@ -288,11 +314,15 @@ private:
     std::unordered_map<uint16_t, std::unique_ptr<ServerScanQuery>> mScans;
 };
 
+
 class ServerManager : public crossbow::infinio::RpcServerManager<ServerManager, ServerSocket> {
     using Base = crossbow::infinio::RpcServerManager<ServerManager, ServerSocket>;
 
 public:
-    ServerManager(crossbow::infinio::InfinibandService& service, Storage& storage, const ServerConfig& config);
+    ServerManager(  crossbow::infinio::InfinibandService& service,
+                    Storage& storage, 
+                    const ServerConfig& config,
+                    std::unique_ptr<commitmanager::ClusterMeta> clusterMeta );
 
 private:
     friend Base;
@@ -310,6 +340,8 @@ private:
 
     ScanBufferManager mScanBufferManager;
     uint64_t mMaxInflightScanBuffer;
+
+    std::shared_ptr<Partitions> mPartitions;
 
     std::vector<std::unique_ptr<crossbow::infinio::InfinibandProcessor>> mProcessors;
 };

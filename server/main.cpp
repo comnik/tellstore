@@ -123,7 +123,7 @@ std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Has
         LOG_INFO("Populating remote tables... (%1%) (%2%)", writeHash(rangeStart), writeHash(rangeEnd));
         for (uint64_t key = 1; key <= 100; ++key) {
             if (key <= 30) {
-                auto partitionKey = HashRing<size_t>::getPartitionToken(table1.tableId(), key);
+                auto partitionKey = HashRing<crossbow::string>::getPartitionToken(table1.tableId(), key);
                 auto testTuple = GenericTuple({
                     std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
                     std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
@@ -139,7 +139,7 @@ std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Has
                     LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
                 }
             } else {
-                auto partitionKey = HashRing<size_t>::getPartitionToken(table2.tableId(), key);
+                auto partitionKey = HashRing<crossbow::string>::getPartitionToken(table2.tableId(), key);
                 auto testTuple = GenericTuple({
                     std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
                     std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
@@ -173,7 +173,7 @@ std::function<void (ClientHandle&)> schemaTransfer(Storage& storage) {
         auto tables = tablesFuture->get();
 
         LOG_INFO("Creating %1% local tables...", tables.size());
-        for (auto const& table : tables) {
+        for (const auto& table : tables) {
             LOG_INFO("\t%1%", table.tableName());
             uint64_t tableId = table.tableId();
             auto succeeded = storage.createTable(table.tableName(), table.record().schema(), tableId);
@@ -206,7 +206,9 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
 
             LOG_INFO("Performing scan on table %1%", table.tableName());
             auto scanStartTime = std::chrono::steady_clock::now();    
-            auto scanIterator = client.scan(
+            auto scanIterator = client.transferKeys(
+                rangeStart,
+                rangeEnd,
                 table,
                 *snapshot,
                 *scanMemory,
@@ -378,7 +380,7 @@ int main(int argc, const char** argv) {
         // Perform the key transfer across all tables
         
         for (auto range : clusterMeta->ranges) {
-            for (auto const& table : storage.getTables()) {
+            for (const auto& table : storage.getTables()) {
                 auto tx = keyTransfer(clusterManager, clusterConfig, storage, table->tableName(), range.start, range.end);
                 TransactionRunner::executeBlocking(clusterManager, tx);
             }
@@ -395,7 +397,7 @@ int main(int argc, const char** argv) {
 
         uint64_t tupleCount = 0;
         for (uint64_t key = 1; key <= 100; ++key) {
-            for (auto const& table : storage.getTables()) {
+            for (const auto& table : storage.getTables()) {
                 auto ec = storage.get(table->tableId(), key, *snapshot, tupleLocation);
                 if (ec == 0) {
                     tupleCount++;
@@ -409,7 +411,7 @@ int main(int argc, const char** argv) {
     }
     
     LOG_INFO("Initialize network server");
-    ServerManager server(service, storage, serverConfig);
+    ServerManager server(service, storage, serverConfig, std::move(clusterMeta));
     service.run();
 
     LOG_INFO("Exiting TellStore server");

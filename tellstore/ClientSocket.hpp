@@ -352,30 +352,60 @@ public:
 
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name);
 
-    std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot);
+    std::shared_ptr<GetResponse> get(   crossbow::infinio::Fiber& fiber,
+                                        uint64_t tableId,
+                                        uint64_t key,
+                                        const commitmanager::SnapshotDescriptor& snapshot );
 
-    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple);
+    std::shared_ptr<ModificationResponse> insert(   crossbow::infinio::Fiber& fiber,
+                                                    uint64_t tableId,
+                                                    uint64_t key,
+                                                    const commitmanager::SnapshotDescriptor& snapshot,
+                                                    const AbstractTuple& tuple );
 
-    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple);
+    std::shared_ptr<ModificationResponse> update(   crossbow::infinio::Fiber& fiber,
+                                                    uint64_t tableId,
+                                                    uint64_t key,
+                                                    const commitmanager::SnapshotDescriptor& snapshot,
+                                                    const AbstractTuple& tuple );
 
-    std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot);
+    std::shared_ptr<ModificationResponse> remove(   crossbow::infinio::Fiber& fiber,
+                                                    uint64_t tableId,
+                                                    uint64_t key,
+                                                    const commitmanager::SnapshotDescriptor& snapshot );
 
-    std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot);
+    std::shared_ptr<ModificationResponse> revert(   crossbow::infinio::Fiber& fiber, 
+                                                    uint64_t tableId, 
+                                                    uint64_t key,
+                                                    const commitmanager::SnapshotDescriptor& snapshot );
 
-    void scanStart(uint16_t scanId, std::shared_ptr<ScanResponse> response, uint64_t tableId, ScanQueryType queryType,
-            uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query,
-            const commitmanager::SnapshotDescriptor& snapshot);
+    void scanStart( uint16_t scanId,
+                    std::shared_ptr<ScanResponse> response,
+                    uint64_t tableId,
+                    ScanQueryType queryType,
+                    uint32_t selectionLength, 
+                    const char* selection, 
+                    uint32_t queryLength, 
+                    const char* query,
+                    const commitmanager::SnapshotDescriptor& snapshot );
 
     void scanProgress(uint16_t scanId, std::shared_ptr<ScanResponse> response, size_t offset);
 
     void scanComplete(uint16_t scanId) {
         completeAsyncRequest(scanId);
     }
+
+    void transferKeys(  commitmanager::Hash rangeStart,
+                        commitmanager::Hash rangeEnd,
+                        uint16_t scanId,
+                        std::shared_ptr<ScanResponse> response,
+                        uint64_t tableId,
+                        ScanQueryType queryType,
+                        uint32_t selectionLength, 
+                        const char* selection, 
+                        uint32_t queryLength, 
+                        const char* query,
+                        const commitmanager::SnapshotDescriptor& snapshot );
 };
 
 extern template class ClusterResponse<GetResponse>;

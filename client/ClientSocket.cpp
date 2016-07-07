@@ -416,9 +416,15 @@ std::shared_ptr<ModificationResponse> ClientSocket::revert(crossbow::infinio::Fi
     return response;
 }
 
-void ClientSocket::scanStart(uint16_t scanId, std::shared_ptr<ScanResponse> response, uint64_t tableId,
-        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-        const char* query, const commitmanager::SnapshotDescriptor& snapshot) {
+void ClientSocket::scanStart(uint16_t scanId,
+                             std::shared_ptr<ScanResponse> response,
+                             uint64_t tableId,
+                             ScanQueryType queryType,
+                             uint32_t selectionLength,
+                             const char* selection,
+                             uint32_t queryLength,
+                             const char* query,
+                             const commitmanager::SnapshotDescriptor& snapshot) {
     if (!startAsyncRequest(scanId, response)) {
         response->onAbort(error::invalid_scan);
         return;
@@ -458,6 +464,54 @@ void ClientSocket::scanProgress(uint16_t scanId, std::shared_ptr<ScanResponse> r
     sendAsyncRequest(scanId, response, RequestType::SCAN_PROGRESS, messageLength, [offset]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<size_t>(offset);
+    });
+}
+
+void ClientSocket::transferKeys(commitmanager::Hash rangeStart,
+                                commitmanager::Hash rangeEnd, 
+                                uint16_t scanId,
+                                std::shared_ptr<ScanResponse> response,
+                                uint64_t tableId,
+                                ScanQueryType queryType, 
+                                uint32_t selectionLength,
+                                const char* selection,
+                                uint32_t queryLength,
+                                const char* query,
+                                const commitmanager::SnapshotDescriptor& snapshot) {
+    
+    if (!startAsyncRequest(scanId, response)) {
+        response->onAbort(error::invalid_scan);
+        return;
+    }
+
+    uint32_t messageLength = 2*sizeof(commitmanager::Hash) + 6*sizeof(uint64_t) + selectionLength + queryLength;
+    messageLength = crossbow::align(messageLength, sizeof(uint64_t));
+    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
+
+    sendAsyncRequest(scanId, response, RequestType::KEY_TRANSFER, messageLength,
+            [rangeStart, rangeEnd, response, tableId, queryType, selectionLength, selection, queryLength, query, &snapshot]
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
+        message.write<commitmanager::Hash>(rangeStart);
+        message.write<commitmanager::Hash>(rangeEnd);
+
+        message.write<uint64_t>(tableId);
+        message.write<uint8_t>(crossbow::to_underlying(queryType));
+
+        auto& memory = response->scanMemory();
+        message.set(0, sizeof(uint64_t) - sizeof(uint8_t));
+        message.write<uint64_t>(reinterpret_cast<uintptr_t>(memory.data()));
+        message.write<uint64_t>(memory.length());
+        message.write<uint32_t>(memory.key());
+
+        message.write<uint32_t>(selectionLength);
+        message.write(selection, selectionLength);
+
+        message.set(0, sizeof(uint32_t));
+        message.write<uint32_t>(queryLength);
+        message.write(query, queryLength);
+
+        message.align(sizeof(uint64_t));
+        writeSnapshot(message, snapshot);
     });
 }
 

@@ -49,6 +49,7 @@ enum class RequestType : uint32_t {
     REVERT,
     SCAN,
     SCAN_PROGRESS,
+    KEY_TRANSFER,
     COMMIT,
 };
 

@@ -178,13 +178,57 @@ std::shared_ptr<ModificationResponse> ClientHandle::revert(const Table& table, u
     return clusterResp->get();
 }
 
-std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table, const commitmanager::SnapshotDescriptor& snapshot,
-        ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
-        uint32_t queryLength, const char* query) {
+std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table,
+                                                 const commitmanager::SnapshotDescriptor& snapshot,
+                                                 ScanMemoryManager& memoryManager,
+                                                 ScanQueryType queryType,
+                                                 uint32_t selectionLength, 
+                                                 const char* selection,
+                                                 uint32_t queryLength,
+                                                 const char* query) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.scan(mFiber, table.tableId(), snapshot, table.record(), memoryManager, queryType, selectionLength,
-            selection, queryLength, query);
+    return mProcessor.scan(
+        mFiber,
+        table.tableId(),
+        snapshot, 
+        table.record(), 
+        memoryManager, 
+        queryType, 
+        selectionLength,
+        selection, 
+        queryLength, 
+        query
+    );
+}
+
+std::shared_ptr<ScanIterator> ClientHandle::transferKeys(commitmanager::Hash rangeStart,
+                                                         commitmanager::Hash rangeEnd,
+                                                         const Table& table,
+                                                         const commitmanager::SnapshotDescriptor& snapshot,
+                                                         ScanMemoryManager& memoryManager,
+                                                         ScanQueryType queryType, 
+                                                         uint32_t selectionLength, 
+                                                         const char* selection,
+                                                         uint32_t queryLength, 
+                                                         const char* query) {
+    // @TODO Is this necessary for key transfers?
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.transferKeys(
+        mFiber,
+        rangeStart,
+        rangeEnd,
+        table.tableId(),
+        snapshot, 
+        table.record(), 
+        memoryManager, 
+        queryType, 
+        selectionLength,
+        selection, 
+        queryLength, 
+        query
+    );
 }
 
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service,
@@ -284,10 +328,16 @@ Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const cr
     return Table(tableId, name, std::move(schema));
 }
 
-std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        const commitmanager::SnapshotDescriptor& snapshot, Record record, ScanMemoryManager& memoryManager,
-        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-        const char* query) {
+std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, 
+                                                        uint64_t tableId,
+                                                        const commitmanager::SnapshotDescriptor& snapshot, 
+                                                        Record record, 
+                                                        ScanMemoryManager& memoryManager,
+                                                        ScanQueryType queryType, 
+                                                        uint32_t selectionLength, 
+                                                        const char* selection, 
+                                                        uint32_t queryLength,
+                                                        const char* query) {
     auto scanId = ++mScanId;
 
     auto iterator = std::make_shared<ScanIterator>(fiber, std::move(record), mTellStoreSocket.size());
@@ -301,8 +351,59 @@ std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber
         auto response = std::make_shared<ScanResponse>(fiber, iterator, *socketIt.second, std::move(memory), scanId);
         iterator->addScanResponse(response);
 
-        socketIt.second->scanStart(scanId, std::move(response), tableId, queryType, selectionLength, selection, queryLength,
-                query, snapshot);
+        socketIt.second->scanStart(
+            scanId,
+            std::move(response),
+            tableId,
+            queryType,
+            selectionLength,
+            selection,
+            queryLength,
+            query,
+            snapshot
+        );
+    }
+    return iterator;
+}
+
+std::shared_ptr<ScanIterator> BaseClientProcessor::transferKeys(crossbow::infinio::Fiber& fiber, 
+                                                                commitmanager::Hash rangeStart,
+                                                                commitmanager::Hash rangeEnd,
+                                                                uint64_t tableId,
+                                                                const commitmanager::SnapshotDescriptor& snapshot, 
+                                                                Record record, 
+                                                                ScanMemoryManager& memoryManager,
+                                                                ScanQueryType queryType, 
+                                                                uint32_t selectionLength, 
+                                                                const char* selection, 
+                                                                uint32_t queryLength,
+                                                                const char* query) {
+    auto scanId = ++mScanId;
+
+    auto iterator = std::make_shared<ScanIterator>(fiber, std::move(record), mTellStoreSocket.size());
+    for (auto& socketIt : mTellStoreSocket) {
+        auto memory = memoryManager.acquire();
+        if (!memory.valid()) {
+            iterator->abort(std::make_error_code(std::errc::not_enough_memory));
+            break;
+        }
+
+        auto response = std::make_shared<ScanResponse>(fiber, iterator, *socketIt.second, std::move(memory), scanId);
+        iterator->addScanResponse(response);
+
+        socketIt.second->transferKeys(
+            rangeStart,
+            rangeEnd,
+            scanId,
+            std::move(response),
+            tableId,
+            queryType,
+            selectionLength,
+            selection,
+            queryLength,
+            query,
+            snapshot
+        );
     }
     return iterator;
 }
