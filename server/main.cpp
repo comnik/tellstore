@@ -28,6 +28,7 @@
 #include <tellstore/ClientManager.hpp>
 #include <tellstore/TransactionRunner.hpp>
 #include <tellstore/GenericTuple.hpp>
+#include <tellstore/ErrorCode.hpp>
 
 #include <util/StorageConfig.hpp>
 
@@ -44,17 +45,24 @@
 
 #include <iostream>
 #include <vector>
+#include <functional>
+#include <cmath>
+#include <limits>
 
 using namespace tell::store;
 using namespace tell::commitmanager;
+using namespace std::placeholders;
 
-// Scan queries have a fixed, known size
+/// How many keys to test
+const uint64_t NUM_KEYS = 10;
+const uint64_t NUM_KEYS_OWNED = floor(0.5f * NUM_KEYS);
+const uint64_t TABLE_SPLIT = floor(0.5f * NUM_KEYS);
+
+/// Scan queries have a fixed, known size
 const uint32_t SELECTION_LENGTH = 136;
 
-crossbow::string writeHash(Hash hash) {
-    uint64_t* value = (uint64_t*) &hash;
-    return crossbow::to_string(value[1]) + crossbow::to_string(value[0]);
-}
+using HashRing_t = tell::commitmanager::HashRing<crossbow::string>;
+
 
 // Constructs a scan query that matches a specific key range
 std::unique_ptr<char[]> createKeyTransferQuery(Table table, Hash rangeStart, Hash rangeEnd) {
@@ -120,40 +128,24 @@ std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Has
         crossbow::string text1 = crossbow::string("Sometext");
         crossbow::string text2 = crossbow::string("Moretext");
 
-        LOG_INFO("Populating remote tables... (%1%) (%2%)", writeHash(rangeStart), writeHash(rangeEnd));
-        for (uint64_t key = 1; key <= 100; ++key) {
-            if (key <= 30) {
-                auto partitionKey = HashRing<crossbow::string>::getPartitionToken(table1.tableId(), key);
-                auto testTuple = GenericTuple({
-                    std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
-                    std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
-                    std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-                    std::make_pair<crossbow::string, boost::any>("text1", text1),
-                    std::make_pair<crossbow::string, boost::any>("text2", text2)
-                });
+        LOG_INFO("Populating remote tables... (%1%) (%2%)", HashRing_t::writeHash(rangeStart), HashRing_t::writeHash(rangeEnd));
+        for (uint64_t key = 1; key <= NUM_KEYS; ++key) {
+            auto table = (key <= TABLE_SPLIT) ? table1 : table2;
+            
+            auto partitionKey = HashRing_t::getPartitionToken(table.tableId(), key);
+            auto testTuple = GenericTuple({
+                std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
+                std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
+                std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                std::make_pair<crossbow::string, boost::any>("text1", text1),
+                std::make_pair<crossbow::string, boost::any>("text2", text2)
+            });
 
-                LOG_INFO("\t-> table1: %1% (%2%)", writeHash(partitionKey), (partitionKey <= rangeEnd));
+            LOG_INFO("\tTuple %1% -> %2%", key, table.tableName());
 
-                auto insertFuture = client.insert(table1, key, *snapshot, testTuple);
-                if (auto ec = insertFuture->error()) {
-                    LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
-                }
-            } else {
-                auto partitionKey = HashRing<crossbow::string>::getPartitionToken(table2.tableId(), key);
-                auto testTuple = GenericTuple({
-                    std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
-                    std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
-                    std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-                    std::make_pair<crossbow::string, boost::any>("text1", text1),
-                    std::make_pair<crossbow::string, boost::any>("text2", text2)
-                });
-
-                LOG_INFO("\t-> table2: %1% (%2%)", writeHash(partitionKey), (partitionKey <= rangeEnd));
-
-                auto insertFuture = client.insert(table2, key, *snapshot, testTuple);
-                if (auto ec = insertFuture->error()) {
-                    LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
-                }
+            auto insertFuture = client.insert(table, key, *snapshot, testTuple);
+            if (auto ec = insertFuture->error()) {
+                LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
             }
         }
         
@@ -196,16 +188,11 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
         try {
             auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
         
-            auto tableResponse = client.getTable(tableName);
-            if (tableResponse->error()) {
-                LOG_ERROR("Error fetching table %1%", tableName);
-            }
-            Table table = tableResponse->get();
+            auto table = client.getTable(tableName)->get();
 
             auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
 
-            LOG_INFO("Performing scan on table %1%", table.tableName());
-            auto scanStartTime = std::chrono::steady_clock::now();    
+            LOG_INFO("Scanning table '%1%'", table.tableName());
             auto scanIterator = client.transferKeys(
                 rangeStart,
                 rangeEnd,
@@ -220,23 +207,21 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
             );
 
             size_t scanCount = 0x0u;
-            size_t scanDataSize = 0x0u;
             while (scanIterator->hasNext()) {
                 uint64_t key;
                 const char* tuple;
                 size_t tupleLength;
                 std::tie(key, tuple, tupleLength) = scanIterator->next();
                 ++scanCount;
-                scanDataSize += tupleLength;
+
+                LOG_INFO("\treceived Tuple %1%", key);
 
                 auto tableId = table.tableId();
-
                 auto ec = storage.insert(tableId, key, tupleLength, tuple, *snapshot);
                 if (ec != 0) {
-                    LOG_ERROR("Got error code %1%", ec);
+                    LOG_ERROR("\tInsertion failed with error code %1%", ec);
                 }
             }
-            auto scanEndTime = std::chrono::steady_clock::now();
 
             if (scanIterator->error()) {
                 auto& ec = scanIterator->error();
@@ -246,17 +231,35 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
 
             client.commit(*snapshot);
 
-            auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
-            auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
-            auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
-                    std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
-            auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
-            LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-                    snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+            LOG_INFO("[TID %1%] Received %2% tuples in total", snapshot->version(), scanCount);
         } catch (const std::system_error& e) {
             LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
         }
     };
+}
+
+void verifyOwnership(ClientHandle& client) {
+    auto tables = client.getTables()->get();
+    auto snapshot = ClientHandle::createAnalyticalSnapshot(0, std::numeric_limits<uint64_t>::max());
+    
+    uint64_t tupleCount = 0;
+
+    for (const auto& table : tables) {
+        LOG_INFO("Checking table %1%:", table.tableName());
+            
+        for (uint64_t key = 1; key <= NUM_KEYS; ++key) {
+            auto getFuture = client.get(table, key, *snapshot);
+            if (!getFuture->waitForResult()) {
+                auto& ec = getFuture->error();
+                LOG_ERROR("\tTuple %1% -> %2%", key, ec.message());
+            } else {
+                tupleCount++;
+            }
+        }
+    }
+
+    LOG_INFO("Found %1% tuples", tupleCount);
+    LOG_ASSERT(tupleCount == (NUM_KEYS - NUM_KEYS_OWNED), "Not all requests were redirected");
 }
 
 int main(int argc, const char** argv) {
@@ -353,9 +356,9 @@ int main(int argc, const char** argv) {
 
     for (auto range : clusterMeta->ranges) {
         if (range.owner == ib0addr) {
-            LOG_INFO("\t-> first owner of range [%1%, %2%]", writeHash(range.start), writeHash(range.end));
+            LOG_INFO("\t-> first owner of range [%1%, %2%]", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end));
         } else {
-            LOG_INFO("\t-> request range [%1%, %2%] from %3%", writeHash(range.start), writeHash(range.end), range.owner);
+            LOG_INFO("\t-> request range [%1%, %2%] from %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
             owners.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
         }
     }
@@ -363,6 +366,12 @@ int main(int argc, const char** argv) {
     clusterConfig->setStores(owners);
 
     if (clusterConfig->numStores() > 0) {
+        // Show test parameters
+
+        LOG_INFO("Num keys: %1%", NUM_KEYS);
+        LOG_INFO("Num keys owned: %1%", NUM_KEYS_OWNED);
+        LOG_INFO("Table pivot: %1%", TABLE_SPLIT);
+
         // Re-initialize the ClientManager
         
         clusterManager.reloadConfig(clusterConfig);
@@ -396,7 +405,7 @@ int main(int argc, const char** argv) {
         };
 
         uint64_t tupleCount = 0;
-        for (uint64_t key = 1; key <= 100; ++key) {
+        for (uint64_t key = 1; key <= NUM_KEYS; ++key) {
             for (const auto& table : storage.getTables()) {
                 auto ec = storage.get(table->tableId(), key, *snapshot, tupleLocation);
                 if (ec == 0) {
@@ -407,7 +416,12 @@ int main(int argc, const char** argv) {
             }
         }
         LOG_INFO("Found %1% tuples", tupleCount);
-        LOG_ASSERT(tupleCount >= 50, "Could not retrieve all tuples!");
+        LOG_ASSERT(tupleCount >= NUM_KEYS_OWNED, "Could not retrieve all tuples!");
+
+        // Ensure requests to the old owner will be redirected
+
+        LOG_INFO("Verifying ownership...");
+        TransactionRunner::executeBlocking(clusterManager, verifyOwnership);
     }
     
     LOG_INFO("Initialize network server");

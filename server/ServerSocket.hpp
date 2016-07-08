@@ -28,6 +28,7 @@
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 #include <commitmanager/MessageTypes.hpp>
+#include <commitmanager/HashRing.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
@@ -48,12 +49,13 @@ class ServerManager;
 struct Partition {
     commitmanager::Hash start;
     commitmanager::Hash end;
-    std::atomic<bool> isBeingTransferred;
+    std::atomic<bool> inTransit;
     uint16_t transferId;
 
     Partition (commitmanager::Hash start, commitmanager::Hash end)
         : start(start),
-          end(end) {}
+          end(end),
+          inTransit(false) {}
 };
 
 
@@ -131,9 +133,9 @@ private:
      * Checks wether the given key lies in any of the nodes partitions.
      */
     bool isResponsible(uint64_t tableId, uint64_t key) {
-        commitmanager::Hash partitionToken = HashRing<crossbow::string>::getPartitionToken(tableId, key);
+        commitmanager::Hash partitionToken = commitmanager::HashRing<crossbow::string>::getPartitionToken(tableId, key);
         for (const auto& partition : *mPartitions) {
-            if (partitionToken >= partition->start && partitionToken <= partition->end) {
+            if (!partition->inTransit.load() && partitionToken >= partition->start && partitionToken <= partition->end) {
                 return true;
             }
         }

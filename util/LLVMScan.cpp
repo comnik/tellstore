@@ -171,8 +171,6 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     auto& fieldMeta = mRecord.getFieldMeta(currentColumn);
                     auto& field = fieldMeta.field;
 
-                    LOG_DEBUG("Preparing scan on regular field @ offset %1% detected", fieldMeta.offset);
-
                     fieldAst.id          = currentColumn;
                     fieldAst.isNotNull   = field.isNotNull();
                     fieldAst.nullIdx     = (field.isNotNull() ? 0 : fieldMeta.nullIdx);
@@ -186,8 +184,6 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     mScanAst.needsNull |= !field.isNotNull();
                 }
 
-                LOG_DEBUG("Inserting new field node...");
-
                 auto res = mScanAst.fields.emplace(currentColumn, std::move(fieldAst));
                 LOG_ASSERT(res.second, "Field already in map");
                 iter = res.first;
@@ -196,8 +192,6 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
 
             // Iterate over all predicates on the field
             for (decltype(numPredicates) j = 0; j < numPredicates; ++j) {
-                LOG_DEBUG("Parsing predicate %1%", j);
-
                 auto predicateType = queryReader.read<PredicateType>();
                 auto conjunct = queryAst.conjunctOffset + queryReader.read<uint8_t>();
                 ++mScanAst.conjunctProperties[conjunct].predicateCount;
@@ -234,7 +228,6 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     case FieldType::HASH128: {
                         queryReader.advance(6);
                         uint64_t value[] = {queryReader.read<uint64_t>(), queryReader.read<uint64_t>()};
-                        LOG_DEBUG("Got %1%%2%", value[1], value[0]);
                         auto val = llvm::ArrayRef<uint64_t>(value, 16);
 
                         predicateAst.fixed.value = llvm::ConstantInt::get(builder.getInt128Ty(), llvm::APInt(128, val));
@@ -281,16 +274,13 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
                     } break;
                     }
                 }
-                LOG_DEBUG("Inserting new predicate node");
                 fieldAst.predicates.emplace_back(std::move(predicateAst));
             }
         }
 
         mScanAst.numConjunct += queryAst.numConjunct;
-        LOG_DEBUG("Inserting new query node");
         mScanAst.queries.emplace_back(std::move(queryAst));
     }
-    LOG_DEBUG("Done.");
     LOG_ASSERT(mScanAst.queries.size() == mQueries.size(), "Did not process every query");
     LOG_ASSERT(mScanAst.conjunctProperties.size() == mScanAst.numConjunct, "Number of conjuncts does not match");
 }

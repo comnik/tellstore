@@ -34,8 +34,11 @@
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/logger.hpp>
 
+
 namespace tell {
 namespace store {
+
+using HashRing = commitmanager::HashRing<crossbow::string>;
 
 void ServerSocket::writeScanProgress(uint16_t scanId, bool done, size_t offset) {
     uint32_t messageLength = 2 * sizeof(size_t);
@@ -358,11 +361,11 @@ void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, cro
     auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
 
     for (auto& partition : *mPartitions) {
-        if (rangeStart >= partition->start && rangeEnd <= partition->end) {
+        if (HashRing::isSubPartition(partition->start, partition->end, rangeStart, rangeEnd)) {
             LOG_INFO("Starting key transfer %1%...", scanId);
 
             partition->transferId = scanId;
-            partition->isBeingTransferred.store(true);
+            partition->inTransit.store(true);
 
             handleScan(messageId, request);
             return;
@@ -408,12 +411,10 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         mScans.erase(i);
 
         for (auto& partition : *mPartitions) {
-            if (partition->isBeingTransferred && scanId == partition->transferId) {
+            if (partition->inTransit && scanId == partition->transferId) {
                 // @TODO notify commit manager
 
                 LOG_INFO("Key transfer %1% succeeded", partition->transferId);
-                partition->isBeingTransferred.store(false);
-                // mPartitions.erase(partition);
             }
         }
     } break;
