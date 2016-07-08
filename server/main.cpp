@@ -56,7 +56,6 @@ using namespace std::placeholders;
 
 /// How many keys to test
 const uint64_t NUM_KEYS = 10;
-const uint64_t NUM_KEYS_OWNED = floor(0.5f * NUM_KEYS);
 const uint64_t TABLE_SPLIT = floor(0.5f * NUM_KEYS);
 
 /// Scan queries have a fixed, known size
@@ -260,7 +259,6 @@ void verifyOwnership(ClientHandle& client) {
     }
 
     LOG_INFO("Found %1% tuples", tupleCount);
-    LOG_ASSERT(tupleCount == (NUM_KEYS - NUM_KEYS_OWNED), "Not all requests were redirected");
 }
 
 int main(int argc, const char** argv) {
@@ -375,7 +373,6 @@ int main(int argc, const char** argv) {
         // Show test parameters
 
         LOG_INFO("Num keys: %1%", NUM_KEYS);
-        LOG_INFO("Num keys owned: %1%", NUM_KEYS_OWNED);
         LOG_INFO("Table pivot: %1%", TABLE_SPLIT);
 
         // Re-initialize the ClientManager
@@ -406,9 +403,7 @@ int main(int argc, const char** argv) {
         LOG_INFO("Verifying key transfer...");
         auto snapshot = ClientHandle::createAnalyticalSnapshot(0, std::numeric_limits<uint64_t>::max());
         char* data = new char[256];
-        auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { 
-            return data;
-        };
+        auto tupleLocation = [&data](size_t size, uint64_t version, bool isNewest) { return data; };
 
         uint64_t tupleCount = 0;
         for (uint64_t key = 1; key <= NUM_KEYS; ++key) {
@@ -421,8 +416,7 @@ int main(int argc, const char** argv) {
                 }
             }
         }
-        LOG_INFO("Found %1% tuples", tupleCount);
-        LOG_ASSERT(tupleCount >= NUM_KEYS_OWNED, "Could not retrieve all tuples!");
+        LOG_INFO("Found %1% tuples locally", tupleCount);
 
         // Ensure requests to the old owner will be redirected
 

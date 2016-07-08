@@ -135,6 +135,7 @@ private:
     bool isResponsible(uint64_t tableId, uint64_t key) {
         commitmanager::Hash partitionToken = commitmanager::HashRing<crossbow::string>::getPartitionToken(tableId, key);
         for (const auto& partition : *mPartitions) {
+            LOG_INFO("Checking partition (%1%)...", partition->inTransit.load());
             if (!partition->inTransit.load() && partitionToken >= partition->start && partitionToken <= partition->end) {
                 return true;
             }
