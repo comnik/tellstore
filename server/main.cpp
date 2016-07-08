@@ -44,6 +44,7 @@
 #include <crossbow/string.hpp>
 
 #include <iostream>
+#include <set>
 #include <vector>
 #include <functional>
 #include <cmath>
@@ -351,19 +352,24 @@ int main(int argc, const char** argv) {
 
     // For this, we treat the set of current owners we need to contact, as a new cluster.
 
-    std::vector<crossbow::infinio::Endpoint> owners;
-    owners.reserve(clusterMeta->ranges.size());
-
+    std::set<crossbow::string> owners;
     for (auto range : clusterMeta->ranges) {
         if (range.owner == ib0addr) {
             LOG_INFO("\t-> first owner of range [%1%, %2%]", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end));
         } else {
             LOG_INFO("\t-> request range [%1%, %2%] from %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
-            owners.emplace_back(crossbow::infinio::Endpoint::ipv4(), range.owner);
+            owners.insert(range.owner);
         }
     }
 
-    clusterConfig->setStores(owners);
+    std::vector<crossbow::infinio::Endpoint> ownerEndpoints;
+    ownerEndpoints.reserve(owners.size());
+
+    for (const auto& owner : owners) {
+        ownerEndpoints.emplace_back(crossbow::infinio::Endpoint::ipv4(), owner);
+    }
+
+    clusterConfig->setStores(ownerEndpoints);
 
     if (clusterConfig->numStores() > 0) {
         // Show test parameters
