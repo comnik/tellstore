@@ -49,14 +49,14 @@ void writeSnapshot(crossbow::buffer_writer& message, const commitmanager::Snapsh
 template<class ResponseType>
 std::shared_ptr<ResponseType> ClusterResponse<ResponseType>::get () {
     if (this->mFuture.which() == 1) {
-        // First we have to wait for the cluster state request to finish
-        if (!this->mStatusResponse->waitForResult()) {
-            auto& ec = this->mStatusResponse->error();
-            LOG_ERROR("Error while receiving cluster information [error = %1% %2%]", ec, ec.message());
-        }
-        auto clusterMeta = this->mStatusResponse->get();
+        // // First we have to wait for the cluster state request to finish
+        // if (!this->mStatusResponse->waitForResult()) {
+        //     auto& ec = this->mStatusResponse->error();
+        //     LOG_ERROR("Error while receiving cluster information [error = %1% %2%]", ec, ec.message());
+        // }
+        // auto clusterMeta = this->mStatusResponse->get();
 
-        mConfigUpdateHandler(std::move(clusterMeta));
+        // // mConfigUpdateHandler(std::move(clusterMeta));
     }
 
     return boost::apply_visitor(ClusterResponse::future_visitor(), this->mFuture);

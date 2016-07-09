@@ -115,9 +115,20 @@ private:
 
 TestClient::TestClient(std::shared_ptr<ClientConfig> config, size_t scanMemoryLength, size_t numTuple, size_t numTransactions)
         : mManager(config),
-          mScanMemory(mManager.allocateScanMemory(config->numStores(), scanMemoryLength / config->numStores())),
           mNumTuple(numTuple),
           mNumTransactions(numTransactions) {
+        
+    // Load initial routing information, so we can estimate scan memory parameters and create tables
+    TransactionRunner::executeBlocking(mManager, [this, scanMemoryLength](ClientHandle& client) {
+        auto clusterState = client.startTransaction();
+        client.commit(*clusterState->snapshot);
+
+        this->mScanMemory = std::move(this->mManager.allocateScanMemory(
+            clusterState->numPeers,
+            scanMemoryLength / clusterState->numPeers
+        ));
+    });
+
     LOG_INFO("Initialized TellStore client");
     for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
         mTuple[i] = GenericTuple({
@@ -202,8 +213,8 @@ void TestClient::addTable(ClientHandle& client) {
 
 void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {
     LOG_TRACE("Starting transaction");
-    auto snapshot = client.startTransaction();
-    LOG_INFO("TID %1%] Started transaction", snapshot->version());
+    auto clusterState = client.startTransaction();
+    LOG_INFO("TID %1%] Started transaction", clusterState->snapshot->version());
 
     OperationTimer insertTimer;
     OperationTimer getTimer;
@@ -211,7 +222,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         insertTimer.start();
-        auto insertFuture = client.insert(mTable, key, *snapshot, mTuple[key % mTuple.size()]);
+        auto insertFuture = client.insert(mTable, key, *clusterState->snapshot, mTuple[key % mTuple.size()]);
         if (auto ec = insertFuture->error()) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
             return;
@@ -221,7 +232,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
 
         LOG_TRACE("Get tuple");
         getTimer.start();
-        auto getFuture = client.get(mTable, key, *snapshot);
+        auto getFuture = client.get(mTable, key, *clusterState->snapshot);
         if (!getFuture->waitForResult()) {
             auto& ec = getFuture->error();
             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
@@ -231,7 +242,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         LOG_DEBUG("Getting tuple took %1%ns", getDuration.count());
 
         auto tuple = getFuture->get();
-        if (tuple->version() != snapshot->version()) {
+        if (tuple->version() != clusterState->snapshot->version()) {
             LOG_ERROR("Tuple not in the version written");
             return;
         }
@@ -272,12 +283,12 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     }
 
     LOG_TRACE("Commit transaction");
-    client.commit(*snapshot);
+    client.commit(*clusterState->snapshot);
 
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     LOG_INFO("TID %1%] Transaction completed in %2%ms [total = %3%ms / %4%ms, average = %5%us / %6%us]",
-             snapshot->version(),
+             clusterState->snapshot->version(),
              duration.count(),
              std::chrono::duration_cast<std::chrono::milliseconds>(insertTimer.total()).count(),
              std::chrono::duration_cast<std::chrono::milliseconds>(getTimer.total()).count(),
@@ -288,8 +299,8 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
 void TestClient::executeScan(ClientHandle& client, float selectivity, bool check) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
-    auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
-    LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", snapshot->version(),
+    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", clusterState->snapshot->version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t recordField;
@@ -316,7 +327,7 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
     selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanIterator = client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength,
+    auto scanIterator = client.scan(mTable, *clusterState->snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength,
             selection.get(), 0x0u, nullptr);
 
     size_t scanCount = 0x0u;
@@ -371,7 +382,7 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
     }
 
     LOG_TRACE("Commit transaction");
-    client.commit(*snapshot);
+    client.commit(*clusterState->snapshot);
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
@@ -379,14 +390,14 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
     auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-            snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+            clusterState->snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
 void TestClient::executeProjection(ClientHandle& client, float selectivity, bool check) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
-    auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
-    LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", snapshot->version(),
+    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", clusterState->snapshot->version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t numberField;
@@ -431,7 +442,7 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanIterator = client.scan(resultTable, *snapshot, *mScanMemory, ScanQueryType::PROJECTION, selectionLength,
+    auto scanIterator = client.scan(resultTable, *clusterState->snapshot, *mScanMemory, ScanQueryType::PROJECTION, selectionLength,
             selection.get(), projectionLength, projection.get());
 
     size_t scanCount = 0x0u;
@@ -474,7 +485,7 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
     }
 
     LOG_TRACE("Commit transaction");
-    client.commit(*snapshot);
+    client.commit(*clusterState->snapshot);
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
@@ -482,14 +493,14 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
     auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-            snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+            clusterState->snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
 void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
-    auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
-    LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", snapshot->version(),
+    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", clusterState->snapshot->version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t recordField;
@@ -536,7 +547,7 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanIterator = client.scan(resultTable, *snapshot, *mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
+    auto scanIterator = client.scan(resultTable, *clusterState->snapshot, *mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
             selection.get(), aggregationLength, aggregation.get());
 
     size_t scanCount = 0x0u;
@@ -569,11 +580,11 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
         return;
     }
 
-    LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%, cnt = %5%]", snapshot->version(), totalSum,
+    LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%, cnt = %5%]", clusterState->snapshot->version(), totalSum,
             totalMin, totalMax, totalCnt);
 
     LOG_TRACE("Commit transaction");
-    client.commit(*snapshot);
+    client.commit(*clusterState->snapshot);
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
@@ -581,14 +592,13 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
     auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-            snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+            clusterState->snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
 } // anonymous namespace
 
 int main(int argc, const char** argv) {
     crossbow::string commitManagerHost;
-    crossbow::string tellStoreHost;
     size_t scanMemoryLength = 0x80000000ull;
     size_t numTuple = 1000000ull;
     size_t numTransactions = 10;
@@ -601,7 +611,6 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'h'>("help", &help),
             crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'c'>("commit-manager", &commitManagerHost),
-            crossbow::program_options::value<'s'>("server", &tellStoreHost),
             crossbow::program_options::value<'m'>("memory", &scanMemoryLength),
             crossbow::program_options::value<'n'>("tuple", &numTuple),
             crossbow::program_options::value<'t'>("transactions", &numTransactions),
@@ -625,31 +634,10 @@ int main(int argc, const char** argv) {
 
     clientConfig->commitManager = ClientConfig::parseCommitManager(commitManagerHost);
 
-    // Fetch initial cluster information
-    // std::unique_ptr<crossbow::infinio::InfinibandProcessor> processor = service.createProcessor();
-    // tell::commitmanager::ClientSocket commitManagerSocket(service.createSocket(*processor));
-
-    // crossbow::infinio::Endpoint endpoint(crossbow::infinio::Endpoint::ipv4(), directoryHost);
-    // commitManagerSocket.connect(endpoint);
-
-    // processor->executeFiber([&ib0addr, &commitManagerSocket] (crossbow::infinio::Fiber& fiber) {
-    //     auto registerResponse = commitManagerSocket.registerNode(fiber, ib0addr, "STORAGE");
-    //     if (!registerResponse->waitForResult()) {
-    //         auto& ec = registerResponse->error();
-    //         LOG_INFO("Error while registering [error = %1% %2%]", ec, ec.message());
-    //         return;
-    //     }
-    // });
-
-    clientConfig->setStores(ClientConfig::parseTellStore(tellStoreHost));
-
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore test client%1%", check ? " (Check)" : "");
     LOG_INFO("--- Commit Manager: %1%", clientConfig->commitManager);
-    for (auto& ep : clientConfig->getStores()) {
-        LOG_INFO("--- TellStore Shards: %1%", ep);
-    }
     LOG_INFO("--- Network Threads: %1%", clientConfig->numNetworkThreads);
     LOG_INFO("--- Scan Memory: %1%GB", double(scanMemoryLength) / double(1024 * 1024 * 1024));
     LOG_INFO("--- Number of tuples: %1%", numTuple);

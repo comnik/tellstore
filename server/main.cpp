@@ -103,7 +103,7 @@ std::unique_ptr<char[]> createKeyTransferQuery(Table table, Hash rangeStart, Has
 
 std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Hash rangeEnd) {
     return [rangeStart, rangeEnd](ClientHandle& client) {        
-        auto snapshot = client.startTransaction(TransactionType::READ_WRITE);
+        auto clusterState = client.startTransaction(TransactionType::READ_WRITE);
 
         Schema schema(TableType::TRANSACTIONAL);
         schema.addField(FieldType::HASH128, "__partition_key", true);
@@ -143,13 +143,13 @@ std::function<void (ClientHandle& client)> initializeRemote(Hash rangeStart, Has
 
             LOG_INFO("\tTuple %1% -> %2%", key, table.tableName());
 
-            auto insertFuture = client.insert(table, key, *snapshot, testTuple);
+            auto insertFuture = client.insert(table, key, *clusterState->snapshot, testTuple);
             if (auto ec = insertFuture->error()) {
                 LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
             }
         }
         
-        client.commit(*snapshot);
+        client.commit(*clusterState->snapshot);
     };
 }
 
@@ -186,7 +186,7 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
         );
 
         try {
-            auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+            auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
         
             auto table = client.getTable(tableName)->get();
 
@@ -197,7 +197,7 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
                 rangeStart,
                 rangeEnd,
                 table,
-                *snapshot,
+                *clusterState->snapshot,
                 *scanMemory,
                 ScanQueryType::FULL,
                 SELECTION_LENGTH,
@@ -217,7 +217,7 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
                 LOG_INFO("\treceived Tuple %1%", key);
 
                 auto tableId = table.tableId();
-                auto ec = storage.insert(tableId, key, tupleLength, tuple, *snapshot);
+                auto ec = storage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);
                 if (ec != 0) {
                     LOG_ERROR("\tInsertion failed with error code %1%", ec);
                 }
@@ -229,9 +229,9 @@ std::function<void (ClientHandle&)> keyTransfer(ClientManager<void>& manager, st
                 return;
             }
 
-            client.commit(*snapshot);
+            client.commit(*clusterState->snapshot);
 
-            LOG_INFO("[TID %1%] Received %2% tuples in total", snapshot->version(), scanCount);
+            LOG_INFO("[TID %1%] Received %2% tuples in total", clusterState->snapshot->version(), scanCount);
         } catch (const std::system_error& e) {
             LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
         }

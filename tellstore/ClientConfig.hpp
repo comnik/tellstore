@@ -26,8 +26,6 @@
 #include <crossbow/infinio/InfinibandLimits.hpp>
 #include <crossbow/string.hpp>
 
-#include <commitmanager/HashRing.hpp>
-
 #include <cstdint>
 #include <vector>
 
@@ -46,8 +44,7 @@ public:
             : maxPendingResponses(48ull),
               maxBatchSize(16ull),
               numNetworkThreads(2ull),
-              numVirtualNodes(1),
-              mNodeRing(numVirtualNodes) {
+              numVirtualNodes(1) {
 
         infinibandConfig.receiveBufferCount = 256;
         infinibandConfig.sendBufferCount = 256;
@@ -74,22 +71,12 @@ public:
     /// Number of virtual nodes assigned to each node in the hash ring
     size_t numVirtualNodes;
 
-    /// Current state of key distribution
-    commitmanager::HashRing<crossbow::string> mNodeRing;
-
     // Returns the number of connected tellstore nodes
     size_t numStores() const { return tellStore.size(); }
 
     std::vector<crossbow::infinio::Endpoint> getStores() { return tellStore; }
 
     void setStores(std::vector<crossbow::infinio::Endpoint> endpoints) {
-        mNodeRing.clear();
-        
-        for (auto& ep : endpoints) {
-            LOG_INFO("Inserting node %1% into hash ring", ep.getToken());
-            mNodeRing.insertNode(ep.getToken(), ep.getToken());
-        }
-
         tellStore = endpoints;
     }
 

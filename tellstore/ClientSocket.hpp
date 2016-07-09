@@ -22,6 +22,8 @@
  */
 #pragma once
 
+#include <commitmanager/MessageTypes.hpp>
+
 #include <tellstore/ClientConfig.hpp>
 #include <tellstore/ErrorCode.hpp>
 #include <tellstore/MessageTypes.hpp>
@@ -55,8 +57,6 @@ class AbstractTuple;
 class ClientSocket;
 class ScanIterator;
 
-using ConfigUpdateHandler = std::function<void (std::unique_ptr<commitmanager::ClusterMeta>)>;
-
 /**
 * @brief Response wrapper that encpasulates a possible cluster status request,
 *        if the local cluster configuration is missing.
@@ -70,10 +70,8 @@ public:
     ClusterResponse(std::shared_ptr<ResponseType> resp) : mFuture(resp) {}
     
     // Constructor with retries
-    ClusterResponse(ConfigUpdateHandler configUpdateHandler,
-                    std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
-                    RequestClosure req) : mConfigUpdateHandler(configUpdateHandler),
-                                          mFuture(req),
+    ClusterResponse(std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
+                    RequestClosure req) : mFuture(req),
                                           mStatusResponse(statusResp) {}
 
     std::shared_ptr<ResponseType> get ();
@@ -88,8 +86,6 @@ private:
             return req()->get();
         }
     };
-
-    ConfigUpdateHandler mConfigUpdateHandler;
 
     boost::variant<std::shared_ptr<ResponseType>, RequestClosure> mFuture;
     

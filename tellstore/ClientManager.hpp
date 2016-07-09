@@ -53,14 +53,14 @@
 #include <vector>
 #include <unordered_map>
 
+using HashRing_t = tell::commitmanager::HashRing<crossbow::string>;
+
 namespace tell {
 namespace store {
 
 struct ClientConfig;
 class BaseClientProcessor;
 class Record;
-
-using ConfigUpdateHandler = std::function<void (std::unique_ptr<commitmanager::ClusterMeta>)>;
 
 /**
  * @brief Class to interact with the TellStore from within a fiber
@@ -87,8 +87,7 @@ public:
 
     void transferOwnership(crossbow::string fromHost, crossbow::string toHost);
 
-    std::unique_ptr<commitmanager::SnapshotDescriptor> startTransaction(
-            TransactionType type = TransactionType::READ_WRITE);
+    std::unique_ptr<commitmanager::ClusterState> startTransaction(TransactionType type = TransactionType::READ_WRITE);
 
     void commit(const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -188,6 +187,8 @@ public:
     template <class Response>
     using RequestFn = std::function<std::shared_ptr<Response> (store::ClientSocket& node)>; 
 
+    void reloadConfig(ClientConfig& config);
+
     void shutdown();
 
     std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::infinio::Fiber& fiber, crossbow::string host, crossbow::string tag);
@@ -196,7 +197,7 @@ public:
 
     void transferOwnership(crossbow::infinio::Fiber& fiber, crossbow::string fromHost, crossbow::string toHost);
 
-    std::unique_ptr<commitmanager::SnapshotDescriptor> start(crossbow::infinio::Fiber& fiber, TransactionType type);
+    std::unique_ptr<commitmanager::ClusterState> start(crossbow::infinio::Fiber& fiber, TransactionType type);
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -262,7 +263,6 @@ public:
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service,
                         std::shared_ptr<ClientConfig> config,
-                        const ConfigUpdateHandler configUpdateHandler,
                         uint64_t processorNum);
 
     ~BaseClientProcessor() = default;
@@ -278,28 +278,20 @@ private:
      * @brief The socket associated with the shard for the given table and key
      */
     store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
-        const crossbow::string* nodeToken = mConfig->mNodeRing.getNode(tableId, key);
-        if (nodeToken != nullptr) {
-            return mTellStoreSocket[*nodeToken].get();
-        } else {
-            // no cluster information available
-            LOG_INFO("No cluster information available!");
-            return nullptr;
-        }
+        const crossbow::string* nodeToken = mNodeRing.getNode(tableId, key);
+        LOG_ASSERT(nodeToken != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+
+        return mTellStoreSocket[*nodeToken].get();
     }
 
     /**
      * @brief The socket associated with the shard for the given partition token
      */
     store::ClientSocket* shard(commitmanager::Hash partitionToken) {
-        const crossbow::string* nodeToken = mConfig->mNodeRing.getNode(partitionToken);
-        if (nodeToken != nullptr) {
-            return mTellStoreSocket[*nodeToken].get();
-        } else {
-            // no cluster information available
-            LOG_INFO("No cluster information available!");
-            return nullptr;
-        }
+        const crossbow::string* nodeToken = mNodeRing.getNode(partitionToken);
+        LOG_ASSERT(nodeToken != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+
+        return mTellStoreSocket[*nodeToken].get();
     }
 
     /**
@@ -307,34 +299,14 @@ private:
      */
     template <class Response>
     std::shared_ptr<ClusterResponse<Response>> withSharding(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key, RequestFn<Response> reqFn) {
-        commitmanager::Hash partitionToken = commitmanager::HashRing<crossbow::string>::getPartitionToken(tableId, key);
+        commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         // Define the full request
         std::function<std::shared_ptr<ClusterResponse<Response>> ()> req = [this, &req, &fiber, &partitionToken, &reqFn] () {
-            // Try to find a node to fullfil this request
+            // Find the node that can fullfil this request
             auto node = shard(partitionToken);
 
-            if (node == nullptr) {
-                // Cluster information is not available. We have to perform a ClusterStatusRequest first.
-
-                // std::shared_ptr<commitmanager::ClusterStateResponse> statusResp;
-                // if (mRequestIsPending.test_and_set()) {
-                    // We are the first thread to perform the request
-                    auto statusResp = mCommitManagerSocket.registerNode(fiber, "@TODO", "PROCESSING");
-                    // mPendingClusterStatusReq.store(statusResp.get());
-                // } else {
-                    // There is a already a request pending
-                    // TODO Continue here. Somehow we have to be sure mPendingClusterStatusReq is already set.
-                    // while (mPendingClusterStatusReq)
-                    // statusResp = std::make_shared<commitmanager::ClusterStateResponse>(mPendingClusterStatusReq.load());
-                // }
-
-                // Return a future that waits for the statusResp and retries this request
-                return std::make_shared<ClusterResponse<Response>>(this->mConfigUpdateHandler, statusResp, req);
-            } else {
-                // Fast path, return a proper response immediately
-                std::shared_ptr<Response> resp = reqFn(*node);
-                return std::make_shared<ClusterResponse<Response>>(resp);
-            }
+            std::shared_ptr<Response> resp = reqFn(*node);
+            return std::make_shared<ClusterResponse<Response>>(resp);
         };
 
         // Start the procedure
@@ -343,16 +315,16 @@ private:
 
     std::shared_ptr<ClientConfig> mConfig;
 
-    // What to do on configuration changes
-    const ConfigUpdateHandler mConfigUpdateHandler;
+    crossbow::infinio::InfinibandService& mService;
+
+    std::atomic<bool> mIsUpdating;
+
+    HashRing_t mNodeRing;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
     commitmanager::ClientSocket mCommitManagerSocket;
     std::unordered_map<crossbow::string, std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
-
-    std::atomic_flag mRequestIsPending = ATOMIC_FLAG_INIT;
-    std::atomic<tell::commitmanager::ClusterStateResponse*> mPendingClusterStatusReq;
 
     uint64_t mProcessorNum;
 
@@ -368,10 +340,9 @@ public:
     template <typename... Args>
     ClientProcessor(crossbow::infinio::InfinibandService& service,
                     std::shared_ptr<ClientConfig> config,
-                    const ConfigUpdateHandler configUpdateHandler,
                     uint64_t processorNum,
                     Args&&... contextArgs)
-        : BaseClientProcessor(service, config, configUpdateHandler, processorNum),
+        : BaseClientProcessor(service, config, processorNum),
           mTransactionCount(0),
           mContext(std::forward<Args>(contextArgs)...) {}
 
@@ -478,24 +449,12 @@ template <typename... Args>
 void ClientManager<Context>::reloadConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs) {
     LOG_INFO("Reloading config...");
 
-    if (mProcessor.size() > 0) {
-        // Have to shutdown any existing connections first
-        for (auto& proc : mProcessor) {
-            proc->shutdown();
-        }
-    }
-
-    // This handler will be called by ClusterResponse futures,
-    // whenever they have to request new cluster information from the commit-manager.
-    auto configUpdateHandler = [this, &config, &contextArgs...] (std::unique_ptr<commitmanager::ClusterMeta> clusterMeta) { 
-        // Update configuration with the new stores
-        config->setStores(ClientConfig::parseTellStore(clusterMeta->hosts));
-        this->reloadConfig(config, contextArgs...); 
-    };
+    // Have to shutdown any existing connections first
+    shutdown();
 
     mProcessor.reserve(config->numNetworkThreads);
     for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, configUpdateHandler, i, contextArgs...));
+        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
     }
 
     LOG_INFO("Successfully reloaded config.");

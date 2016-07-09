@@ -58,7 +58,7 @@ void ClientHandle::transferOwnership(crossbow::string fromHost, crossbow::string
     return mProcessor.transferOwnership(mFiber, fromHost, toHost);
 }
 
-std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransaction(
+std::unique_ptr<commitmanager::ClusterState> ClientHandle::startTransaction(
         TransactionType type /* = TransactionType::READ_WRITE */) {
     return mProcessor.start(mFiber, type);
 }
@@ -233,29 +233,43 @@ std::shared_ptr<ScanIterator> ClientHandle::transferKeys(commitmanager::Hash ran
 
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service,
                                          std::shared_ptr<ClientConfig> config,
-                                         ConfigUpdateHandler configUpdateHandler,
                                          uint64_t processorNum) 
     : mConfig(config),
-      mConfigUpdateHandler(configUpdateHandler),
+      mService(service),
+      mIsUpdating(false),
+      mNodeRing(config->numVirtualNodes),
       mProcessor(service.createProcessor()),
       mCommitManagerSocket(service.createSocket(*mProcessor), config->maxPendingResponses, config->maxBatchSize),
       mProcessorNum(processorNum),
       mScanId(0u) {
 
-    mCommitManagerSocket.connect(config->commitManager);
+    reloadConfig(*config);
+}
 
-    mTellStoreSocket.reserve(config->numStores());
-    for (auto& ep : config->getStores()) {
-        std::unique_ptr<store::ClientSocket> socket(new ClientSocket(
-            service.createSocket(*mProcessor),
-            config->maxPendingResponses,
-            config->maxBatchSize
-        ));
+void BaseClientProcessor::reloadConfig(ClientConfig& config) {
+    LOG_INFO("Reloading processor config...");
 
-        socket->connect(ep, mProcessorNum);
-        
-        mTellStoreSocket[ep.getToken()] = std::move(socket);
+    if (!mCommitManagerSocket.isConnected()) {
+        mCommitManagerSocket.connect(config.commitManager);
     }
+    
+    for (auto& ep : config.getStores()) {
+        auto search = mTellStoreSocket.find(ep.getToken());
+        if (search == mTellStoreSocket.end()) {
+            // Socket not yet contained
+            std::unique_ptr<store::ClientSocket> socket(new ClientSocket(
+                mService.createSocket(*mProcessor),
+                config.maxPendingResponses,
+                config.maxBatchSize
+            ));
+
+            socket->connect(ep, mProcessorNum);
+            
+            mTellStoreSocket[ep.getToken()] = std::move(socket);
+        }
+    }
+
+    LOG_INFO("Successfully reloaded processor config.");
 }
 
 void BaseClientProcessor::shutdown() {
@@ -263,7 +277,10 @@ void BaseClientProcessor::shutdown() {
         throw std::runtime_error("Unable to shutdown from within the processing thread");
     }
 
-    mCommitManagerSocket.shutdown();
+    if (mCommitManagerSocket.isConnected()) {
+        mCommitManagerSocket.shutdown();
+    }
+
     for (auto& socketIt : mTellStoreSocket) {
         socketIt.second->shutdown();
     }
@@ -295,12 +312,36 @@ void BaseClientProcessor::transferOwnership(crossbow::infinio::Fiber& fiber,
     resp->get();
 }
 
-std::unique_ptr<commitmanager::SnapshotDescriptor> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber,
-        TransactionType type) {
+std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, TransactionType type) {
     // TODO Return a transaction future?
-
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
-    return startResponse->get();
+    auto clusterState = startResponse->get();
+    std::vector<crossbow::infinio::Endpoint> endpoints = ClientConfig::parseTellStore(clusterState->peers);
+
+    if (mIsUpdating.exchange(true)) {
+        LOG_INFO("Someone is already updating this shit.");
+        // There is a already someone updating the partition information, wait till he's done
+        // while (mIsUpdating.load());
+    } else {
+        // We are the first thread to update the partition information
+        // Create and load new configuration
+        ClientConfig config(*mConfig);
+        config.setStores(endpoints);
+        clusterState->numPeers = config.numStores();
+        
+        reloadConfig(config); 
+
+        // Update thread-local routing information
+        mNodeRing.clear();
+        for (auto& ep : endpoints) {
+            LOG_INFO("Inserting node %1% into hash ring", ep.getToken());
+            mNodeRing.insertNode(ep.getToken(), ep.getToken());
+        }
+
+        mIsUpdating.store(false);
+    }
+
+    return clusterState;
 }
 
 void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
