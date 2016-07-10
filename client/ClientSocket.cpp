@@ -484,7 +484,7 @@ void ClientSocket::transferKeys(commitmanager::Hash rangeStart,
         return;
     }
 
-    uint32_t messageLength = 2*sizeof(commitmanager::Hash) + 6*sizeof(uint64_t) + selectionLength + queryLength;
+    uint32_t messageLength = 2*sizeof(commitmanager::Hash) + 7*sizeof(uint64_t) + selectionLength + queryLength;
     messageLength = crossbow::align(messageLength, sizeof(uint64_t));
     messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 
@@ -493,6 +493,7 @@ void ClientSocket::transferKeys(commitmanager::Hash rangeStart,
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<commitmanager::Hash>(rangeStart);
         message.write<commitmanager::Hash>(rangeEnd);
+        message.write<uint64_t>(snapshot.version());
 
         message.write<uint64_t>(tableId);
         message.write<uint8_t>(crossbow::to_underlying(queryType));

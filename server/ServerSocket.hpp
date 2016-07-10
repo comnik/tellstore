@@ -49,17 +49,8 @@ class ServerManager;
 struct Partition {
     commitmanager::Hash start;
     commitmanager::Hash end;
-    std::atomic<bool> inTransit;
-    uint16_t transferId;
-
-    Partition (commitmanager::Hash start, commitmanager::Hash end)
-        : start(start),
-          end(end),
-          inTransit(false) {}
+    uint64_t atVersion;
 };
-
-
-using Partitions = std::vector<std::unique_ptr<Partition>>;
 
 
 /**
@@ -72,14 +63,12 @@ class ServerSocket : public crossbow::infinio::RpcServerSocket<ServerManager, Se
 
 public:
     ServerSocket(ServerManager& manager,
-                 std::shared_ptr<Partitions> partitions,
                  Storage& storage, 
                  crossbow::infinio::InfinibandProcessor& processor,
                  crossbow::infinio::InfinibandSocket socket, 
                  size_t maxBatchSize, 
                  uint64_t maxInflightScanBuffer)
             : Base(manager, processor, std::move(socket), crossbow::string(), maxBatchSize),
-              mPartitions(partitions),
               mStorage(storage),
               mMaxInflightScanBuffer(maxInflightScanBuffer),
               mInflightScanBuffer(0u) {
@@ -128,21 +117,6 @@ public:
 
 private:
     friend Base;
-
-    /**
-     * Checks wether the given key lies in any of the nodes partitions.
-     */
-    bool isResponsible(uint64_t tableId, uint64_t key) {
-        commitmanager::Hash partitionToken = commitmanager::HashRing<crossbow::string>::getPartitionToken(tableId, key);
-        for (const auto& partition : *mPartitions) {
-            LOG_INFO("Checking partition (%1%)...", partition->inTransit.load());
-            if (!partition->inTransit.load() && partitionToken >= partition->start && partitionToken <= partition->end) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     void onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType, crossbow::buffer_reader& message);
 
@@ -312,8 +286,6 @@ private:
      */
     void writeModificationResponse(crossbow::infinio::MessageId messageId, int ec);
 
-    std::shared_ptr<Partitions> mPartitions;
-
     Storage& mStorage;
 
     /// Maximum number of scan buffers that are in flight on the socket at the same time
@@ -329,6 +301,9 @@ private:
     /// Map from Scan ID to the shared data class associated with the scan
     /// The Connection has the ownership because we can only free this after all RDMA writes have been processed
     std::unordered_map<uint16_t, std::unique_ptr<ServerScanQuery>> mScans;
+
+    /// Map from Scan ID to the partition being transferred
+    std::unordered_map<uint16_t, std::unique_ptr<Partition>> mTransfers;
 };
 
 
@@ -338,8 +313,7 @@ class ServerManager : public crossbow::infinio::RpcServerManager<ServerManager, 
 public:
     ServerManager(  crossbow::infinio::InfinibandService& service,
                     Storage& storage, 
-                    const ServerConfig& config,
-                    std::unique_ptr<commitmanager::ClusterMeta> clusterMeta );
+                    const ServerConfig& config );
 
 private:
     friend Base;
@@ -357,8 +331,6 @@ private:
 
     ScanBufferManager mScanBufferManager;
     uint64_t mMaxInflightScanBuffer;
-
-    std::shared_ptr<Partitions> mPartitions;
 
     std::vector<std::unique_ptr<crossbow::infinio::InfinibandProcessor>> mProcessors;
 };

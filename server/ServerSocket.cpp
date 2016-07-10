@@ -216,14 +216,6 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
         });
 
         if (ec) {
-            if (ec == error::errors::not_found || ec == error::errors::not_in_snapshot) {
-                if (!this->isResponsible(tableId, key)) {
-                    // We are not responsible for this key, this probably was not a real error -> redirect
-                    writeErrorResponse(messageId, error::errors::not_responsible);
-                    return;
-                }
-            } 
-            
             writeErrorResponse(messageId, static_cast<error::errors>(ec));
             return;
         }
@@ -355,26 +347,18 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
-    commitmanager::Hash rangeStart = request.read<commitmanager::Hash>();
-    commitmanager::Hash rangeEnd = request.read<commitmanager::Hash>();
-
     auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
+    LOG_INFO("Starting key transfer %1%...", scanId);
 
-    for (auto& partition : *mPartitions) {
-        if (HashRing::isSubPartition(partition->start, partition->end, rangeStart, rangeEnd)) {
-            LOG_INFO("Starting key transfer %1%...", scanId);
+    std::unique_ptr<Partition> partition(new Partition);
 
-            partition->transferId = scanId;
-            partition->inTransit.store(true);
+    partition->start = request.read<commitmanager::Hash>();
+    partition->end = request.read<commitmanager::Hash>();
+    partition->atVersion = request.read<uint64_t>();
 
-            handleScan(messageId, request);
-            return;
-        }
-    }
+    mTransfers[scanId] = std::move(partition);
 
-    // No matching partition found
-    LOG_ERROR("Transfer of unknown partition requested");
-    writeErrorResponse(messageId, error::invalid_scan);
+    handleScan(messageId, request);
 }
 
 void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
@@ -410,12 +394,11 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         i->second->completeScan();
         mScans.erase(i);
 
-        for (auto& partition : *mPartitions) {
-            if (partition->inTransit && scanId == partition->transferId) {
-                // @TODO notify commit manager
+        auto search = mTransfers.find(scanId);
+        if (search != mTransfers.end()) {
+            // @TODO notify commit manager
 
-                LOG_INFO("Key transfer %1% succeeded", partition->transferId);
-            }
+            LOG_INFO("Key transfer %1% succeeded", scanId);
         }
     } break;
 
@@ -479,8 +462,7 @@ void ServerSocket::writeModificationResponse(crossbow::infinio::MessageId messag
 
 ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
                              Storage& storage,
-                             const ServerConfig& config,
-                             std::unique_ptr<commitmanager::ClusterMeta> clusterMeta)
+                             const ServerConfig& config)
         : Base(service, config.port),
           mStorage(storage),
           mMaxBatchSize(config.maxBatchSize),
@@ -489,14 +471,6 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
     
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessors.emplace_back(service.createProcessor());
-    }
-
-    mPartitions = std::make_shared<Partitions>();
-    mPartitions->reserve(clusterMeta->ranges.size());
-
-    for (const auto& range : clusterMeta->ranges) {
-        std::unique_ptr<Partition> partition(new Partition(range.start, range.end));
-        mPartitions->push_back(std::move(partition));
     }
 }
 
@@ -515,7 +489,6 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
     LOG_INFO("%1%] New client connection on processor %2%", socket->remoteAddress(), thread);
     return new ServerSocket(
         *this,
-        mPartitions, 
         mStorage, 
         processor, 
         std::move(socket), 

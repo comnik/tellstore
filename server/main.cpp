@@ -425,7 +425,7 @@ int main(int argc, const char** argv) {
     }
     
     LOG_INFO("Initialize network server");
-    ServerManager server(service, storage, serverConfig, std::move(clusterMeta));
+    ServerManager server(service, storage, serverConfig);
     service.run();
 
     LOG_INFO("Exiting TellStore server");
