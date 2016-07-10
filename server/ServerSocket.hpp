@@ -28,7 +28,6 @@
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 #include <commitmanager/MessageTypes.hpp>
-#include <commitmanager/HashRing.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
@@ -46,10 +45,16 @@ namespace store {
 class ServerManager;
 
 
-struct Partition {
+struct Transfer {
     commitmanager::Hash start;
     commitmanager::Hash end;
     uint64_t atVersion;
+    crossbow::infinio::MessageId messageId;
+    crossbow::buffer_reader request;
+
+    Transfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request)
+        : messageId(messageId),
+          request(request) {}
 };
 
 
@@ -249,6 +254,8 @@ private:
 
     virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
 
+    void checkTransfers(commitmanager::SnapshotDescriptor& snapshot);
+
     /**
      * @brief Get the snapshot associated with the request and pass it to the function
      *
@@ -303,7 +310,7 @@ private:
     std::unordered_map<uint16_t, std::unique_ptr<ServerScanQuery>> mScans;
 
     /// Map from Scan ID to the partition being transferred
-    std::unordered_map<uint16_t, std::unique_ptr<Partition>> mTransfers;
+    std::unordered_map<uint16_t, std::unique_ptr<Transfer>> mTransfers;
 };
 
 

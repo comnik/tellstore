@@ -347,18 +347,18 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
+    LOG_INFO("Handling new key transfer...");
     auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
-    LOG_INFO("Starting key transfer %1%...", scanId);
 
-    std::unique_ptr<Partition> partition(new Partition);
+    std::unique_ptr<Transfer> transfer(new Transfer(messageId, request));
 
-    partition->start = request.read<commitmanager::Hash>();
-    partition->end = request.read<commitmanager::Hash>();
-    partition->atVersion = request.read<uint64_t>();
+    transfer->start = request.read<commitmanager::Hash>();
+    transfer->end = request.read<commitmanager::Hash>();
+    transfer->atVersion = request.read<uint64_t>();
 
-    mTransfers[scanId] = std::move(partition);
+    mTransfers[scanId] = std::move(transfer);
 
-    handleScan(messageId, request);
+    LOG_INFO("Registered key transfer %1% on %2%", scanId, mTransfers[scanId]->atVersion);
 }
 
 void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
@@ -399,12 +399,22 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
             // @TODO notify commit manager
 
             LOG_INFO("Key transfer %1% succeeded", scanId);
+            mTransfers.erase(search);
         }
     } break;
 
     default: {
         LOG_ERROR("Scan progress with invalid status");
     } break;
+    }
+}
+
+void ServerSocket::checkTransfers(commitmanager::SnapshotDescriptor& snapshot) {
+    for (const auto& transferIt : mTransfers) {
+        if (snapshot.lowestActiveVersion() > transferIt.second->atVersion) {
+            LOG_INFO("Starting key transfer %1%...", transferIt.first);
+            handleScan(transferIt.second->messageId, transferIt.second->request);
+        }
     }
 }
 
@@ -433,9 +443,11 @@ void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossb
             }
             i = res.first;
         }
+        checkTransfers(*i->second);
         f(*i->second);
     } else if (hasDescriptor) {
         auto snapshot = commitmanager::SnapshotDescriptor::deserialize(message);
+        checkTransfers(*snapshot);
         f(*snapshot);
     } else {
         writeErrorResponse(messageId, error::invalid_snapshot);
