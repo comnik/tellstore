@@ -28,6 +28,10 @@
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 #include <commitmanager/MessageTypes.hpp>
+#include <commitmanager/HashRing.hpp>
+
+#include <tellstore/ClientConfig.hpp>
+#include <tellstore/ClientManager.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
@@ -49,12 +53,10 @@ struct Transfer {
     commitmanager::Hash start;
     commitmanager::Hash end;
     uint64_t atVersion;
-    crossbow::infinio::MessageId messageId;
-    crossbow::buffer_reader request;
+    bool started;
 
-    Transfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request)
-        : messageId(messageId),
-          request(request) {}
+    Transfer()
+        : started(false) {}
 };
 
 
@@ -122,6 +124,7 @@ public:
 
 private:
     friend Base;
+    friend ServerManager;
 
     void onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType, crossbow::buffer_reader& message);
 
@@ -254,8 +257,6 @@ private:
 
     virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
 
-    void checkTransfers(commitmanager::SnapshotDescriptor& snapshot);
-
     /**
      * @brief Get the snapshot associated with the request and pass it to the function
      *
@@ -310,7 +311,7 @@ private:
     std::unordered_map<uint16_t, std::unique_ptr<ServerScanQuery>> mScans;
 
     /// Map from Scan ID to the partition being transferred
-    std::unordered_map<uint16_t, std::unique_ptr<Transfer>> mTransfers;
+    std::vector<std::unique_ptr<Transfer>> mTransfers;
 };
 
 
@@ -320,7 +321,8 @@ class ServerManager : public crossbow::infinio::RpcServerManager<ServerManager, 
 public:
     ServerManager(  crossbow::infinio::InfinibandService& service,
                     Storage& storage, 
-                    const ServerConfig& config );
+                    const ServerConfig& config,
+                    std::shared_ptr<ClientConfig> peersConfig );
 
 private:
     friend Base;
@@ -332,6 +334,18 @@ private:
         return mScanBufferManager;
     }
 
+    void checkTransfer(Transfer& transfer, const commitmanager::SnapshotDescriptor& snapshot);
+    void checkTransfers(const commitmanager::SnapshotDescriptor& snapshot);
+
+    void transferSchema(ClientHandle& client);
+    void transferKeys(crossbow::string tableName, commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
+
+    void performTransfer(Transfer& transfer);
+
+    std::shared_ptr<ClientConfig> mPeersConfig;
+
+    ClientManager<void> mPeersManager;
+
     Storage& mStorage;
 
     size_t mMaxBatchSize;
@@ -340,6 +354,9 @@ private:
     uint64_t mMaxInflightScanBuffer;
 
     std::vector<std::unique_ptr<crossbow::infinio::InfinibandProcessor>> mProcessors;
+
+    /// Map from Scan ID to the partition being transferred
+    std::vector<std::unique_ptr<Transfer>> mTransfers;
 };
 
 } // namespace store

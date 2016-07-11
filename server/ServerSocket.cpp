@@ -25,20 +25,25 @@
 
 #include <util/PageManager.hpp>
 
-#include <commitmanager/HashRing.hpp>
-
 #include <tellstore/ErrorCode.hpp>
 #include <tellstore/MessageTypes.hpp>
+#include <tellstore/TransactionRunner.hpp>
 
 #include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/logger.hpp>
 
+#include <set>
+#include <vector>
+
 
 namespace tell {
 namespace store {
 
-using HashRing = commitmanager::HashRing<crossbow::string>;
+using namespace tell::commitmanager;
+using namespace std::placeholders;
+using HashRing_t = HashRing<crossbow::string>;
+
 
 void ServerSocket::writeScanProgress(uint16_t scanId, bool done, size_t offset) {
     uint32_t messageLength = 2 * sizeof(size_t);
@@ -198,7 +203,7 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+            (const SnapshotDescriptor& snapshot) {
         auto ec = mStorage.get(tableId, key, snapshot, [this, messageId]
                 (size_t size, uint64_t version, bool isNewest) {
             char* data = nullptr;
@@ -232,7 +237,7 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
     request.align(8u);
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+            (const SnapshotDescriptor& snapshot) {
         auto ec = mStorage.update(tableId, key, dataLength, data, snapshot);
         writeModificationResponse(messageId, ec);
     });
@@ -248,7 +253,7 @@ void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow
     request.align(8u);
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+            (const SnapshotDescriptor& snapshot) {
         auto ec = mStorage.insert(tableId, key, dataLength, data, snapshot);
         writeModificationResponse(messageId, ec);
     });
@@ -259,7 +264,7 @@ void ServerSocket::handleRemove(crossbow::infinio::MessageId messageId, crossbow
     auto key = request.read<uint64_t>();
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+            (const SnapshotDescriptor& snapshot) {
         auto ec = mStorage.remove(tableId, key, snapshot);
         writeModificationResponse(messageId, ec);
     });
@@ -270,7 +275,7 @@ void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow
     auto key = request.read<uint64_t>();
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+            (const SnapshotDescriptor& snapshot) {
         auto ec = mStorage.revert(tableId, key, snapshot);
         writeModificationResponse(messageId, ec);
     });
@@ -304,11 +309,11 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
     request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request,
             [this, messageId, tableId, &remoteRegion, selectionLength, &selection, queryType, queryLength, &query]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+            (const SnapshotDescriptor& snapshot) {
         auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
 
         // Copy snapshot descriptor
-        auto scanSnapshot = commitmanager::SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
+        auto scanSnapshot = SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
                 snapshot.baseVersion(), snapshot.version(), snapshot.data());
 
         auto table = mStorage.getTable(tableId);
@@ -347,18 +352,14 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
-    LOG_INFO("Handling new key transfer...");
-    auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
+    std::unique_ptr<Transfer> transfer(new Transfer);
 
-    std::unique_ptr<Transfer> transfer(new Transfer(messageId, request));
-
-    transfer->start = request.read<commitmanager::Hash>();
-    transfer->end = request.read<commitmanager::Hash>();
+    transfer->start = request.read<Hash>();
+    transfer->end = request.read<Hash>();
     transfer->atVersion = request.read<uint64_t>();
 
-    mTransfers[scanId] = std::move(transfer);
-
-    LOG_INFO("Registered key transfer %1% on %2%", scanId, mTransfers[scanId]->atVersion);
+    LOG_INFO("Registering new key transfer @ version %1% (%2% queued in total)", transfer->atVersion, mTransfers.size());
+    mTransfers.push_back(std::move(transfer));
 }
 
 void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
@@ -394,27 +395,18 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         i->second->completeScan();
         mScans.erase(i);
 
-        auto search = mTransfers.find(scanId);
-        if (search != mTransfers.end()) {
-            // @TODO notify commit manager
+        // auto search = mTransfers.find(scanId);
+        // if (search != mTransfers.end()) {
+        //     // @TODO notify commit manager
 
-            LOG_INFO("Key transfer %1% succeeded", scanId);
-            mTransfers.erase(search);
-        }
+        //     LOG_INFO("Key transfer %1% succeeded", scanId);
+        //     mTransfers.erase(search);
+        // }
     } break;
 
     default: {
         LOG_ERROR("Scan progress with invalid status");
     } break;
-    }
-}
-
-void ServerSocket::checkTransfers(commitmanager::SnapshotDescriptor& snapshot) {
-    for (const auto& transferIt : mTransfers) {
-        if (snapshot.lowestActiveVersion() > transferIt.second->atVersion) {
-            LOG_INFO("Starting key transfer %1%...", transferIt.first);
-            handleScan(transferIt.second->messageId, transferIt.second->request);
-        }
     }
 }
 
@@ -435,7 +427,7 @@ void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossb
             }
         } else {
             // The client send a snapshot so we have to add it to the cache (it must not already be there)
-            auto snapshot = commitmanager::SnapshotDescriptor::deserialize(message);
+            auto snapshot = SnapshotDescriptor::deserialize(message);
             auto res = mSnapshots.emplace(snapshot->version(), std::move(snapshot));
             if (!res.second) { // Snapshot descriptor already is in the cache
                 writeErrorResponse(messageId, error::invalid_snapshot);
@@ -443,11 +435,11 @@ void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossb
             }
             i = res.first;
         }
-        checkTransfers(*i->second);
+        manager().checkTransfers(*i->second);
         f(*i->second);
     } else if (hasDescriptor) {
-        auto snapshot = commitmanager::SnapshotDescriptor::deserialize(message);
-        checkTransfers(*snapshot);
+        auto snapshot = SnapshotDescriptor::deserialize(message);
+        manager().checkTransfers(*snapshot);
         f(*snapshot);
     } else {
         writeErrorResponse(messageId, error::invalid_snapshot);
@@ -474,8 +466,11 @@ void ServerSocket::writeModificationResponse(crossbow::infinio::MessageId messag
 
 ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
                              Storage& storage,
-                             const ServerConfig& config)
+                             const ServerConfig& config,
+                             std::shared_ptr<ClientConfig> peersConfig)
         : Base(service, config.port),
+          mPeersConfig(peersConfig),
+          mPeersManager(peersConfig),
           mStorage(storage),
           mMaxBatchSize(config.maxBatchSize),
           mScanBufferManager(service, config),
@@ -484,6 +479,61 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessors.emplace_back(service.createProcessor());
     }
+
+    // Register with the commit-manager
+
+    LOG_INFO("Registering with commit-manager...");
+
+    std::unique_ptr<ClusterState> clusterState;
+    std::unique_ptr<ClusterMeta> clusterMeta;
+    TransactionRunner::executeBlocking(mPeersManager, [&config, &clusterState, &clusterMeta](ClientHandle& client) {
+        clusterState = std::move(client.startTransaction());
+        
+        clusterMeta = std::move(client.registerNode(config.nodeToken, "STORAGE"));
+        
+        client.commit(*clusterState->snapshot);
+    });
+
+    // We registered successfully. This means, the commit manager should have 
+    // responded with key ranges we are now responsible for. We have to
+    // request these ranges from their current owners and then notify the commit manager that we now control them.
+
+    std::set<crossbow::string> owners;
+    for (auto range : clusterMeta->ranges) {
+        if (range.owner == config.nodeToken) {
+            LOG_INFO("\t-> first owner of range [%1%, %2%]", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end));
+        } else {
+            LOG_INFO("\t-> request range [%1%, %2%] from %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
+            
+            owners.insert(range.owner);
+
+            std::unique_ptr<Transfer> transfer(new Transfer);
+            transfer->start = range.start;
+            transfer->end = range.end;
+            transfer->atVersion = clusterState->snapshot->version();
+
+            mTransfers.push_back(std::move(transfer));
+        }
+    }
+
+    std::vector<crossbow::infinio::Endpoint> ownerEndpoints;
+    ownerEndpoints.reserve(owners.size());
+    for (const auto& owner : owners) {
+        ownerEndpoints.emplace_back(crossbow::infinio::Endpoint::ipv4(), owner);
+    }
+
+    mPeersConfig->setStores(ownerEndpoints);
+
+    if (mPeersConfig->numStores() > 0) {
+        // Re-initialize the ClientManager
+        mPeersManager.reloadConfig(mPeersConfig);
+        
+        // Fetch the schema
+        auto schemaTransferTx = std::bind(&ServerManager::transferSchema, this, _1);
+        TransactionRunner::executeBlocking(mPeersManager, schemaTransferTx);
+    }
+
+    LOG_INFO("Storage node is ready");
 }
 
 ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocket socket,
@@ -508,6 +558,170 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
         mMaxInflightScanBuffer
     );
 }
+
+void ServerManager::checkTransfer(Transfer& transfer, const SnapshotDescriptor& snapshot) {
+    if (!transfer.started) {
+        if (snapshot.lowestActiveVersion() > transfer.atVersion) {
+            LOG_INFO("Starting key transfer...");
+            
+            transfer.started = true;
+            performTransfer(transfer);
+        }
+    }
+}
+
+void ServerManager::checkTransfers(const SnapshotDescriptor& snapshot) {
+    // Check the server managers own queued transfers
+    for (const auto& transfer : mTransfers) {
+        checkTransfer(*transfer, snapshot);
+    }
+
+    // Check each sockets queued transfers
+    for (const auto& socket : mSockets) {
+        for (const auto& transfer : socket->mTransfers) {
+            checkTransfer(*transfer, snapshot);
+        }
+    }
+}
+
+const uint32_t SELECTION_LENGTH = 136;
+/**
+ * Constructs a scan query that matches a specific key range.
+ */
+std::unique_ptr<char[]> createKeyTransferQuery(Table& table, Hash rangeStart, Hash rangeEnd) {
+    std::unique_ptr<char[]> selection(new char[SELECTION_LENGTH]);
+
+    crossbow::buffer_writer selectionWriter(selection.get(), SELECTION_LENGTH);
+    selectionWriter.write<uint32_t>(0x1u);      // Number of columns
+    selectionWriter.write<uint16_t>(0x2u);      // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x0u);      // Partition shift
+    selectionWriter.write<uint32_t>(0x0u);      // Partition key
+    selectionWriter.write<uint32_t>(0x0u);      // Partition value
+    
+    // Selection on the partition key
+    Record::id_t keyField;
+    table.record().idOf("__partition_key", keyField);
+    LOG_ASSERT(keyField >= 0, "Schema must have an partition key defined.");
+
+    selectionWriter.write<uint16_t>(keyField);      // -1 is the fixed id of the tell key field
+    selectionWriter.write<uint16_t>(0x2u);          // number of predicates
+    selectionWriter.align(sizeof(uint64_t));        
+    
+    // We need a predicate P(key) := rangeStart < key <= rangeEnd
+    
+    // Start with rangeStart < key
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::UNSIGNED_GREATER));
+    selectionWriter.write<uint8_t>(0x0u);           // predicate id
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<Hash>(rangeStart);
+    
+    // And then key <= rangeEnd
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::UNSIGNED_LESS_EQUAL));
+    selectionWriter.write<uint8_t>(0x1u);           // predicate id
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<Hash>(rangeEnd);
+
+    return selection;
+}
+
+/**
+ * Describes a schema transfer transaction to initialize
+ * the local node from its peers.
+ */
+void ServerManager::transferSchema(ClientHandle& client) {
+    LOG_INFO("Fetching schema...");
+    auto tablesFuture = client.getTables();
+    if (auto ec = tablesFuture->error()) {
+        LOG_ERROR("Error fetching remote tables [error = %1% %2%]", ec, ec.message());
+    }
+
+    auto tables = tablesFuture->get();
+
+    LOG_INFO("Creating %1% local tables...", tables.size());
+    for (const auto& table : tables) {
+        LOG_INFO("\t%1%", table.tableName());
+        auto tableId = table.tableId();
+        auto succeeded = mStorage.createTable(table.tableName(), table.record().schema(), tableId);
+        if (!succeeded) {
+            LOG_ERROR("\tCould not create table %1%", table.tableName());
+        }            
+    }
+}
+
+/**
+ * Describes a key transfer transaction.
+ */
+void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
+
+    // Allocate scan memory
+    size_t scanMemoryLength = 0x80000000ull;
+    std::unique_ptr<ScanMemoryManager> scanMemory = mPeersManager.allocateScanMemory(
+        mPeersConfig->numStores(),
+        scanMemoryLength / mPeersConfig->numStores()
+    );
+
+    try {
+        auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+
+        auto table = client.getTable(tableName)->get();
+
+        auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
+
+        LOG_INFO("Requesting key transfer on table '%1%' @ version %2% @ LAV: %3%", table.tableName(), clusterState->snapshot->version(), clusterState->snapshot->lowestActiveVersion());
+        auto scanIterator = client.transferKeys(
+            rangeStart,
+            rangeEnd,
+            table,
+            *clusterState->snapshot,
+            *scanMemory,
+            ScanQueryType::FULL,
+            SELECTION_LENGTH,
+            transferQuery.get(),
+            0x0u,
+            nullptr
+        );
+
+        size_t scanCount = 0x0u;
+        while (scanIterator->hasNext()) {
+            uint64_t key;
+            const char* tuple;
+            size_t tupleLength;
+            std::tie(key, tuple, tupleLength) = scanIterator->next();
+            ++scanCount;
+
+            LOG_INFO("\treceived Tuple %1%", key);
+
+            auto tableId = table.tableId();
+            auto ec = mStorage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);
+            if (ec != 0) {
+                LOG_ERROR("\tInsertion failed with error code %1%", ec);
+            }
+        }
+
+        if (scanIterator->error()) {
+            auto& ec = scanIterator->error();
+            LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+            return;
+        }
+
+        client.commit(*clusterState->snapshot);
+
+        LOG_INFO("[TID %1%] Received %2% tuples in total", clusterState->snapshot->version(), scanCount);
+    } catch (const std::system_error& e) {
+        LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
+    }
+}
+
+/**
+ * Performs a key transfer.
+ */
+void ServerManager::performTransfer(Transfer& transfer) {
+    for (const auto& table : mStorage.getTables()) {
+        auto tx = std::bind(&ServerManager::transferKeys, this, table->tableName(), transfer.start, transfer.end, _1);
+        TransactionRunner::executeBlocking(mPeersManager, tx);
+    }
+}
+
 
 } // namespace store
 } // namespace tell

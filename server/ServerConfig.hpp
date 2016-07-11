@@ -22,6 +22,8 @@
  */
 #pragma once
 
+#include <crossbow/string.hpp>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -50,6 +52,9 @@ struct ServerConfig {
 
     /// Maximum number of messages per batch
     size_t maxBatchSize = 16;
+
+    // token identifying the node, typically the ib0 address
+    crossbow::string nodeToken;
 };
 
 } // namespace store
