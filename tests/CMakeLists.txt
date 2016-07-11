@@ -56,3 +56,24 @@ target_link_libraries(tellstore-test PRIVATE crossbow_infinio crossbow_logger)
 # Link against Jemalloc
 target_include_directories(tellstore-test PRIVATE ${Jemalloc_INCLUDE_DIRS})
 target_link_libraries(tellstore-test PRIVATE ${Jemalloc_LIBRARIES})
+
+###################
+# TellStore elastic client test
+###################
+set(ELASTICITY_TEST_SRCS
+    client/ElasticClient.cpp
+)
+
+# Add TellStore test client executable
+add_executable(elasticity-test ${ELASTICITY_TEST_SRCS})
+
+# Link against TellStore client
+target_link_libraries(elasticity-test PRIVATE tellstore-client)
+
+# Link against Crossbow
+target_include_directories(elasticity-test PRIVATE ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(elasticity-test PRIVATE crossbow_infinio crossbow_logger)
+
+# Link against Jemalloc
+target_include_directories(elasticity-test PRIVATE ${Jemalloc_INCLUDE_DIRS})
+target_link_libraries(elasticity-test PRIVATE ${Jemalloc_LIBRARIES})
