@@ -490,7 +490,11 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
     TransactionRunner::executeBlocking(mPeersManager, [&config, &clusterState, &clusterMeta](ClientHandle& client) {
         clusterState = std::move(client.startTransaction());
         
-        clusterMeta = std::move(client.registerNode(config.nodeToken, "STORAGE"));
+        clusterMeta = std::move(client.registerNode(
+            *clusterState->snapshot,
+            config.nodeToken, 
+            "STORAGE"
+        ));
         
         client.commit(*clusterState->snapshot);
     });

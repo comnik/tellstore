@@ -46,8 +46,10 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createAnalytica
     return commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
 }
 
-std::unique_ptr<commitmanager::ClusterMeta> ClientHandle::registerNode(crossbow::string host, crossbow::string tag) {
-    return mProcessor.registerNode(mFiber, host, tag);
+std::unique_ptr<commitmanager::ClusterMeta> ClientHandle::registerNode(const commitmanager::SnapshotDescriptor& snapshot,
+                                                                       crossbow::string host, 
+                                                                       crossbow::string tag) {
+    return mProcessor.registerNode(mFiber, snapshot, host, tag);
 }
 
 void ClientHandle::unregisterNode(crossbow::string host) {
@@ -237,6 +239,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
     : mConfig(config),
       mService(service),
       mIsUpdating(false),
+      mCachedDirectoryVersion(0),
       mNodeRing(config->numVirtualNodes),
       mProcessor(service.createProcessor()),
       mCommitManagerSocket(service.createSocket(*mProcessor), config->maxPendingResponses, config->maxBatchSize),
@@ -286,8 +289,11 @@ void BaseClientProcessor::shutdown() {
     }
 }
 
-std::unique_ptr<commitmanager::ClusterMeta> BaseClientProcessor::registerNode(crossbow::infinio::Fiber& fiber, crossbow::string host, crossbow::string tag) {
-    auto registerResponse = mCommitManagerSocket.registerNode(fiber, host, tag);
+std::unique_ptr<commitmanager::ClusterMeta> BaseClientProcessor::registerNode(crossbow::infinio::Fiber& fiber, 
+                                                                              const commitmanager::SnapshotDescriptor& snapshot,
+                                                                              crossbow::string host, 
+                                                                              crossbow::string tag) {
+    auto registerResponse = mCommitManagerSocket.registerNode(fiber, snapshot, host, tag);
     if (auto& ec = registerResponse->error()) {
         LOG_ERROR("Error while registering [error = %1% %2%]", ec, ec.message());
     }
@@ -312,33 +318,40 @@ void BaseClientProcessor::transferOwnership(crossbow::infinio::Fiber& fiber,
     resp->get();
 }
 
-std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, TransactionType type) {
+std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, 
+                                                                        TransactionType type) {
     // TODO Return a transaction future?
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
     auto clusterState = startResponse->get();
-    std::vector<crossbow::infinio::Endpoint> endpoints = ClientConfig::parseTellStore(clusterState->peers);
+    
+    LOG_INFO("Received directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
 
-    if (mIsUpdating.exchange(true)) {
-        LOG_INFO("Someone is already updating this shit.");
-        // There is a already someone updating the partition information, wait till he's done
-        // while (mIsUpdating.load());
-    } else {
-        // We are the first thread to update the partition information
-        // Create and load new configuration
-        ClientConfig config(*mConfig);
-        config.setStores(endpoints);
-        clusterState->numPeers = config.numStores();
-        
-        reloadConfig(config); 
+    if (clusterState->directoryVersion > mCachedDirectoryVersion) {
+        std::vector<crossbow::infinio::Endpoint> endpoints = ClientConfig::parseTellStore(clusterState->peers);
 
-        // Update thread-local routing information
-        mNodeRing.clear();
-        for (auto& ep : endpoints) {
-            LOG_INFO("Inserting node %1% into hash ring", ep.getToken());
-            mNodeRing.insertNode(ep.getToken(), ep.getToken());
+        if (mIsUpdating.exchange(true)) {
+            LOG_INFO("Someone is already updating the configuration.");
+            // There is a already someone updating the partition information, wait till he's done
+            // while (mIsUpdating.load());
+        } else {
+            // We are the first thread to update the partition information
+            // Create and load new configuration
+            ClientConfig config(*mConfig);
+            config.setStores(endpoints);
+            clusterState->numPeers = config.numStores();
+            
+            reloadConfig(config);
+
+            // Update thread-local routing information
+            mNodeRing.clear();
+            for (auto& ep : endpoints) {
+                LOG_DEBUG("Inserting node %1% into hash ring", ep.getToken());
+                mNodeRing.insertNode(ep.getToken(), ep.getToken());
+            }
+
+            mCachedDirectoryVersion = clusterState->directoryVersion;
+            mIsUpdating.store(false);
         }
-
-        mIsUpdating.store(false);
     }
 
     return clusterState;

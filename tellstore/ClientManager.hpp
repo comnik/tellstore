@@ -81,7 +81,9 @@ public:
         return mFiber;
     }
 
-    std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::string host, crossbow::string tag);
+    std::unique_ptr<commitmanager::ClusterMeta> registerNode(const commitmanager::SnapshotDescriptor& snapshot,
+                                                             crossbow::string host, 
+                                                             crossbow::string tag);
 
     void unregisterNode(crossbow::string host);
 
@@ -191,7 +193,10 @@ public:
 
     void shutdown();
 
-    std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::infinio::Fiber& fiber, crossbow::string host, crossbow::string tag);
+    std::unique_ptr<commitmanager::ClusterMeta> registerNode(crossbow::infinio::Fiber& fiber, 
+                                                             const commitmanager::SnapshotDescriptor& snapshot,
+                                                             crossbow::string host, 
+                                                             crossbow::string tag);
     
     void unregisterNode(crossbow::infinio::Fiber& fiber, crossbow::string host);
 
@@ -319,6 +324,7 @@ private:
 
     std::atomic<bool> mIsUpdating;
 
+    uint64_t mCachedDirectoryVersion;
     HashRing_t mNodeRing;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
