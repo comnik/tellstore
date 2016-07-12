@@ -250,6 +250,11 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
 }
 
 void BaseClientProcessor::reloadConfig(ClientConfig& config) {
+    if (config.isLocked) {
+        LOG_DEBUG("Client config is locked, aborting reload.");
+        return;
+    }
+
     LOG_INFO("Reloading processor config...");
 
     if (!mCommitManagerSocket.isConnected()) {
@@ -271,8 +276,6 @@ void BaseClientProcessor::reloadConfig(ClientConfig& config) {
             mTellStoreSocket[ep.getToken()] = std::move(socket);
         }
     }
-
-    LOG_INFO("Successfully reloaded processor config.");
 }
 
 void BaseClientProcessor::shutdown() {

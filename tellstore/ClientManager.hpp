@@ -405,6 +405,9 @@ public:
     void shutdown();
 
     template <typename... Args>
+    void lockConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs);
+
+    template <typename... Args>
     void reloadConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs);
 
     template <typename Fun>
@@ -439,8 +442,6 @@ ClientManager<Context>::ClientManager(std::shared_ptr<ClientConfig> config, Args
     });
 
     reloadConfig(config, contextArgs...);
-
-    LOG_INFO("Succesfully started client manager");
 }
 
 template<typename Context>
@@ -448,6 +449,15 @@ ClientManager<Context>::~ClientManager() {
     LOG_INFO("Destroying client manager");
     shutdown();
     mServiceThread.detach();
+}
+
+template <typename Context>
+template <typename... Args>
+void ClientManager<Context>::lockConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs) {
+    LOG_INFO("Loading and locking config...");
+
+    reloadConfig(config, contextArgs...);
+    config->isLocked = true; 
 }
 
 template <typename Context>
@@ -462,8 +472,6 @@ void ClientManager<Context>::reloadConfig(std::shared_ptr<ClientConfig> config, 
     for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
         mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
     }
-
-    LOG_INFO("Successfully reloaded config.");
 }
 
 template <typename Context>

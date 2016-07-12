@@ -539,8 +539,10 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
             scanMemoryLength / mPeersConfig->numStores()
         ));
 
-        // Re-initialize the ClientManager
-        mPeersManager.reloadConfig(mPeersConfig);
+        // Re-initialize the ClientManager.
+        // We have to lock the configuration, otherwise
+        // the peer will reload it's own adress from the directory.
+        mPeersManager.lockConfig(mPeersConfig);
         
         // Fetch the schema
         auto schemaTransferTx = std::bind(&ServerManager::transferSchema, this, _1);

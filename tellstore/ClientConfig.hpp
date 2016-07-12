@@ -44,7 +44,8 @@ public:
             : maxPendingResponses(48ull),
               maxBatchSize(16ull),
               numNetworkThreads(2ull),
-              numVirtualNodes(1) {
+              numVirtualNodes(1),
+              isLocked(false) {
 
         infinibandConfig.receiveBufferCount = 256;
         infinibandConfig.sendBufferCount = 256;
@@ -70,6 +71,9 @@ public:
 
     /// Number of virtual nodes assigned to each node in the hash ring
     size_t numVirtualNodes;
+
+    /// Indicates wether the configuration may be reloaded
+    bool isLocked;
 
     // Returns the number of connected tellstore nodes
     size_t numStores() const { return tellStore.size(); }
