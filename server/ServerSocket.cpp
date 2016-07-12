@@ -358,7 +358,7 @@ void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, cro
     transfer->end = request.read<Hash>();
     transfer->atVersion = request.read<uint64_t>();
 
-    LOG_INFO("Registering new key transfer @ version %1% (%2% queued in total)", transfer->atVersion, mTransfers.size());
+    LOG_INFO("Registering new key transfer @ version %1%", transfer->atVersion);
     mTransfers.push_back(std::move(transfer));
 }
 
@@ -471,6 +471,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
         : Base(service, config.port),
           mPeersConfig(peersConfig),
           mPeersManager(peersConfig),
+          mTxRunner(new MultiTransactionRunner<void>(mPeersManager)),
           mStorage(storage),
           mMaxBatchSize(config.maxBatchSize),
           mScanBufferManager(service, config),
@@ -512,6 +513,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
             transfer->end = range.end;
             transfer->atVersion = clusterState->snapshot->version();
 
+            LOG_INFO("Registering new key transfer @ version %1%", transfer->atVersion);
             mTransfers.push_back(std::move(transfer));
         }
     }
@@ -525,6 +527,14 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
     mPeersConfig->setStores(ownerEndpoints);
 
     if (mPeersConfig->numStores() > 0) {
+        // Allocate scan memory
+
+        size_t scanMemoryLength = 0x80000000ull;
+        mScanMemory = std::move(mPeersManager.allocateScanMemory(
+            mPeersConfig->numStores(),
+            scanMemoryLength / mPeersConfig->numStores()
+        ));
+
         // Re-initialize the ClientManager
         mPeersManager.reloadConfig(mPeersConfig);
         
@@ -561,7 +571,7 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
 
 void ServerManager::checkTransfer(Transfer& transfer, const SnapshotDescriptor& snapshot) {
     if (!transfer.started) {
-        if (snapshot.lowestActiveVersion() > transfer.atVersion) {
+        if (snapshot.lowestActiveVersion() >= transfer.atVersion) {
             LOG_INFO("Starting key transfer...");
             
             transfer.started = true;
@@ -571,6 +581,7 @@ void ServerManager::checkTransfer(Transfer& transfer, const SnapshotDescriptor& 
 }
 
 void ServerManager::checkTransfers(const SnapshotDescriptor& snapshot) {
+    LOG_TRACE("Checking %1% queued transfers against %2%", mTransfers.size(), snapshot.lowestActiveVersion());
     // Check the server managers own queued transfers
     for (const auto& transfer : mTransfers) {
         checkTransfer(*transfer, snapshot);
@@ -652,14 +663,6 @@ void ServerManager::transferSchema(ClientHandle& client) {
  * Describes a key transfer transaction.
  */
 void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
-
-    // Allocate scan memory
-    size_t scanMemoryLength = 0x80000000ull;
-    std::unique_ptr<ScanMemoryManager> scanMemory = mPeersManager.allocateScanMemory(
-        mPeersConfig->numStores(),
-        scanMemoryLength / mPeersConfig->numStores()
-    );
-
     try {
         auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
 
@@ -667,13 +670,10 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
 
         auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
 
-        LOG_INFO("Requesting key transfer on table '%1%' @ version %2% @ LAV: %3%", table.tableName(), clusterState->snapshot->version(), clusterState->snapshot->lowestActiveVersion());
-        auto scanIterator = client.transferKeys(
-            rangeStart,
-            rangeEnd,
+        auto scanIterator = client.scan(
             table,
             *clusterState->snapshot,
-            *scanMemory,
+            *mScanMemory,
             ScanQueryType::FULL,
             SELECTION_LENGTH,
             transferQuery.get(),
@@ -718,7 +718,7 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
 void ServerManager::performTransfer(Transfer& transfer) {
     for (const auto& table : mStorage.getTables()) {
         auto tx = std::bind(&ServerManager::transferKeys, this, table->tableName(), transfer.start, transfer.end, _1);
-        TransactionRunner::executeBlocking(mPeersManager, tx);
+        mTxRunner->execute(tx);
     }
 }
 

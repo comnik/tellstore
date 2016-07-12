@@ -32,6 +32,8 @@
 
 #include <tellstore/ClientConfig.hpp>
 #include <tellstore/ClientManager.hpp>
+#include <tellstore/TransactionRunner.hpp>
+#include <tellstore/ScanMemory.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
@@ -345,6 +347,10 @@ private:
     std::shared_ptr<ClientConfig> mPeersConfig;
 
     ClientManager<void> mPeersManager;
+
+    std::unique_ptr<MultiTransactionRunner<void>> mTxRunner;
+
+    std::unique_ptr<ScanMemoryManager> mScanMemory;
 
     Storage& mStorage;
 
