@@ -53,7 +53,6 @@
 #include <vector>
 #include <unordered_map>
 
-using HashRing_t = tell::commitmanager::HashRing<crossbow::string>;
 
 namespace tell {
 namespace store {
@@ -61,6 +60,19 @@ namespace store {
 struct ClientConfig;
 class BaseClientProcessor;
 class Record;
+
+struct Node {
+    bool isBootstrapping;
+    crossbow::string token;
+
+    Node(const crossbow::string& token) 
+        : isBootstrapping(false),
+          token(token) {}
+
+    Node(const Node& other)
+        : isBootstrapping(other.isBootstrapping),
+          token(other.token) {}
+};
 
 /**
  * @brief Class to interact with the TellStore from within a fiber
@@ -186,9 +198,7 @@ private:
  */
 class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
-    template <class Response>
-    using RequestFn = std::function<std::shared_ptr<Response> (store::ClientSocket& node)>; 
-
+    
     void reloadConfig(ClientConfig& config);
 
     void shutdown();

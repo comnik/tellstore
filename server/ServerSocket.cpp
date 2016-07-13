@@ -695,7 +695,7 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
             std::tie(key, tuple, tupleLength) = scanIterator->next();
             ++scanCount;
 
-            LOG_INFO("\treceived Tuple %1%", key);
+            LOG_INFO("\treceived tuple %1%", key);
 
             auto tableId = table.tableId();
             auto ec = mStorage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);

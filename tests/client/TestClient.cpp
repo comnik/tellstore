@@ -214,7 +214,7 @@ void TestClient::addTable(ClientHandle& client) {
 void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {
     LOG_TRACE("Starting transaction");
     auto clusterState = client.startTransaction();
-    LOG_INFO("TID %1%] Started transaction", clusterState->snapshot->version());
+    LOG_INFO("TID %1%] Started transaction with LAV: %2%", clusterState->snapshot->version(), clusterState->snapshot->lowestActiveVersion());
 
     OperationTimer insertTimer;
     OperationTimer getTimer;

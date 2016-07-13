@@ -335,20 +335,21 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
     auto clusterState = startResponse->get();
     
-    LOG_INFO("Received directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
+    LOG_DEBUG("Received directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
 
     if (clusterState->directoryVersion > mCachedDirectoryVersion) {
-        std::vector<crossbow::infinio::Endpoint> endpoints = ClientConfig::parseTellStore(clusterState->peers);
-
         if (mIsUpdating.exchange(true)) {
             LOG_INFO("Someone is already updating the configuration.");
             // There is a already someone updating the partition information, wait till he's done
             // while (mIsUpdating.load());
         } else {
             // We are the first thread to update the partition information
+            auto endpoints = ClientConfig::parseTellStore(clusterState->peers);
+
             // Create and load new configuration
             ClientConfig config(*mConfig);
             config.setStores(endpoints);
+
             clusterState->numPeers = config.numStores();
             
             reloadConfig(config);
@@ -356,8 +357,15 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
             // Update thread-local routing information
             mNodeRing.clear();
             for (auto& ep : endpoints) {
-                LOG_DEBUG("Inserting node %1% into hash ring", ep.getToken());
-                mNodeRing.insertNode(ep.getToken(), ep.getToken());
+                Node node(ep.getToken());
+
+                // Check if the node is still bootstrapping
+                if (clusterState->bootstrappingPeers.find(node.token) == clusterState->bootstrappingPeers.end()) {
+                    node.isBootstrapping = true;
+                }
+
+                LOG_DEBUG("Inserting node %1% into hash ring (bootstrapping = %2%)", node.token, node.isBootstrapping);
+                mNodeRing.insertNode(node.token, node);
             }
 
             mCachedDirectoryVersion = clusterState->directoryVersion;

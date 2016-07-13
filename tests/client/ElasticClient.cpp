@@ -213,7 +213,7 @@ void ElasticClient::createSchema(ClientHandle& client) {
     LOG_INFO("Creating %1% remote tables...", mNumTables);
 
     mTables.reserve(mNumTables);
-    for (size_t i=0; i<=mNumTables; ++i) {
+    for (size_t i=0; i < mNumTables; ++i) {
         mTables.push_back(client.createTable("shard" + crossbow::to_string(i), schema));
     }
 
