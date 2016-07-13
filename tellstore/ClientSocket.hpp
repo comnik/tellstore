@@ -38,7 +38,6 @@
 #include <crossbow/string.hpp>
 
 #include <sparsehash/dense_hash_map>
-#include <boost/variant.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -48,7 +47,6 @@
 namespace tell {
 namespace commitmanager {
 class SnapshotDescriptor;
-class ClusterStateResponse;
 } // namespace commitmanager
 
 namespace store {
@@ -64,32 +62,37 @@ class ScanIterator;
 template <class ResponseType>
 class ClusterResponse final {
 public:
-    using RequestClosure = std::function<std::shared_ptr<ClusterResponse<ResponseType>>()>;
-
     // Fast-path constructor
-    ClusterResponse(std::shared_ptr<ResponseType> resp) : mFuture(resp) {}
+    ClusterResponse( std::shared_ptr<ResponseType> resp ) 
+        : mResponse(resp) {}
     
-    // Constructor with retries
-    ClusterResponse(std::shared_ptr<commitmanager::ClusterStateResponse> statusResp,
-                    RequestClosure req) : mFuture(req),
-                                          mStatusResponse(statusResp) {}
+    // Constructor with retry
+    ClusterResponse( std::shared_ptr<ResponseType> resp,
+                     std::shared_ptr<ResponseType> retryResp ) 
+        : mResponse(resp),
+          mRetryResponse(retryResp) {}
 
-    std::shared_ptr<ResponseType> get ();
+    std::shared_ptr<ResponseType> get() {
+        if (mRetryResponse == nullptr) {
+            // No retry set
+            return mResponse;
+        } else {
+            // First we have to wait for the original request to finish
+            // and see if it fails
+            if (!mResponse->waitForResult()) {
+                auto& ec = mResponse->error();
+                LOG_ERROR("ClusterResponse caught error %1% (%2%)", ec, ec.message());
+
+                return mRetryResponse;
+            } else {
+                return mResponse;
+            }
+        }
+    }
     
 private:
-    class future_visitor : public boost::static_visitor<std::shared_ptr<ResponseType>> {
-    public:
-        std::shared_ptr<ResponseType> operator () (std::shared_ptr<ResponseType> resp) const { return resp; }
-
-        std::shared_ptr<ResponseType> operator () (RequestClosure req) const {
-            // Retry the original request
-            return req()->get();
-        }
-    };
-
-    boost::variant<std::shared_ptr<ResponseType>, RequestClosure> mFuture;
-    
-    std::shared_ptr<commitmanager::ClusterStateResponse> mStatusResponse;
+    std::shared_ptr<ResponseType> mResponse;
+    std::shared_ptr<ResponseType> mRetryResponse;
 };
 
 /**
@@ -405,7 +408,6 @@ public:
 };
 
 extern template class ClusterResponse<GetResponse>;
-extern template class ClusterResponse<ModificationResponse>;
 
 } // namespace store
 } // namespace tell

@@ -218,27 +218,27 @@ public:
 
     std::shared_ptr<ClusterResponse<GetResponse>> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return withSharding<GetResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.get(fiber, tableId, key, snapshot); });
+        return withReadSharding(fiber, tableId, key, [&](store::ClientSocket& node) { return node.get(fiber, tableId, key, snapshot); });
     }
 
-    std::shared_ptr<ClusterResponse<ModificationResponse>> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.insert(fiber, tableId, key, snapshot, tuple); });
+        return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
     }
 
-    std::shared_ptr<ClusterResponse<ModificationResponse>> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.update(fiber, tableId, key, snapshot, tuple); });
+        return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
     }
 
-    std::shared_ptr<ClusterResponse<ModificationResponse>> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.remove(fiber, tableId, key, snapshot); });
+        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
     }
 
-    std::shared_ptr<ClusterResponse<ModificationResponse>> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return withSharding<ModificationResponse>(fiber, tableId, key, [&](store::ClientSocket& node) { return node.revert(fiber, tableId, key, snapshot); });
+        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ScanIterator> scan( crossbow::infinio::Fiber& fiber,
@@ -279,43 +279,53 @@ protected:
     }
 
 private:
-    /**
-     * @brief The socket associated with the shard for the given table and key
-     */
-    store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
-        const crossbow::string* nodeToken = mNodeRing.getNode(tableId, key);
-        LOG_ASSERT(nodeToken != nullptr, "No routing information available. Have you forgotten startTransaction()?");
-
-        return mTellStoreSocket[*nodeToken].get();
-    }
+    using HashRing_t = commitmanager::HashRing<Node>;
 
     /**
      * @brief The socket associated with the shard for the given partition token
      */
     store::ClientSocket* shard(commitmanager::Hash partitionToken) {
-        const crossbow::string* nodeToken = mNodeRing.getNode(partitionToken);
-        LOG_ASSERT(nodeToken != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+        const Node* node = mNodeRing.getNode(partitionToken);
+        LOG_ASSERT(node != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        return mTellStoreSocket[*nodeToken].get();
+        return mTellStoreSocket[node->token].get();
+    }
+
+    store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
+        return shard(HashRing_t::getPartitionToken(tableId, key));
     }
 
     /**
-     * @brief Performs and potentially retries a sharded request.
+     * @brief Performs a read request to a bootstrapping node and retries it automatically
+     * on the node that previously owned the key.
      */
-    template <class Response>
-    std::shared_ptr<ClusterResponse<Response>> withSharding(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key, RequestFn<Response> reqFn) {
+    std::shared_ptr<ClusterResponse<GetResponse>> withReadSharding(crossbow::infinio::Fiber& fiber, 
+                                                                   uint64_t tableId, 
+                                                                   uint64_t key, 
+                                                                   std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn) {
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
-        // Define the full request
-        std::function<std::shared_ptr<ClusterResponse<Response>> ()> req = [this, &req, &fiber, &partitionToken, &reqFn] () {
-            // Find the node that can fullfil this request
-            auto node = shard(partitionToken);
+        
+        const Node* node = mNodeRing.getNode(partitionToken);
+        LOG_ASSERT(node != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-            std::shared_ptr<Response> resp = reqFn(*node);
-            return std::make_shared<ClusterResponse<Response>>(resp);
-        };
+        if (node->isBootstrapping) {
+            // first attempt on the bootstrapping node
+            auto nodeSocket = mTellStoreSocket[node->token].get();
+            auto resp = reqFn(*nodeSocket);
 
-        // Start the procedure
-        return req();
+            // but we might have to retry the request on the previous owner
+            auto prevNode = mNodeRing.getPreviousNode(partitionToken);
+            auto prevNodeSocket = mTellStoreSocket[prevNode->token].get();
+            auto retryResp = reqFn(*prevNodeSocket);
+
+            LOG_INFO("Attempted read on nodes %1% and %2%", node->token, prevNode->token);
+
+            return std::make_shared<ClusterResponse<GetResponse>>(resp, retryResp);
+        } else {
+            // nothing special here, we just have to wrap the response
+            auto nodeSocket = mTellStoreSocket[node->token].get();
+            return std::make_shared<ClusterResponse<GetResponse>>(reqFn(*nodeSocket));
+        }
     }
 
     std::shared_ptr<ClientConfig> mConfig;
