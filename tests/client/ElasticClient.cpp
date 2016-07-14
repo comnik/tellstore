@@ -280,8 +280,8 @@ void ElasticClient::verify(ClientHandle& client) {
     client.commit(*clusterState->snapshot);
 
     auto endTime = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
-    LOG_INFO("Verification took %1%ns", duration.count());
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+    LOG_INFO("Verification took %1%ms", duration.count());
 }
 
 // void ElasticClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {

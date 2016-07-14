@@ -81,7 +81,7 @@ public:
             // and see if it fails
             if (!mResponse->waitForResult()) {
                 auto& ec = mResponse->error();
-                LOG_ERROR("ClusterResponse caught error %1% (%2%)", ec, ec.message());
+                LOG_DEBUG("ClusterResponse caught error %1% (%2%)", ec, ec.message());
 
                 return mRetryResponse;
             } else {

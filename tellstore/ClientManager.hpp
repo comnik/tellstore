@@ -328,7 +328,7 @@ private:
             auto prevNodeSocket = mTellStoreSocket[prevNode->token].get();
             auto retryResp = reqFn(*prevNodeSocket);
 
-            LOG_INFO("Attempted read on nodes %1% and %2%", node->token, prevNode->token);
+            LOG_DEBUG("Attempted read on nodes %1% and %2%", node->token, prevNode->token);
 
             return std::make_shared<ClusterResponse<GetResponse>>(resp, retryResp);
         } else {

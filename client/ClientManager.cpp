@@ -360,7 +360,7 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
                 Node node(ep.getToken());
 
                 // Check if the node is still bootstrapping
-                if (clusterState->bootstrappingPeers.find(node.token) == clusterState->bootstrappingPeers.end()) {
+                if (clusterState->bootstrappingPeers.find(node.token) != clusterState->bootstrappingPeers.end()) {
                     node.isBootstrapping = true;
                 }
 
