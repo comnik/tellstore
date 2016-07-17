@@ -469,6 +469,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
                              const ServerConfig& config,
                              std::shared_ptr<ClientConfig> peersConfig)
         : Base(service, config.port),
+          mToken(config.nodeToken),
           mPeersConfig(peersConfig),
           mPeersManager(peersConfig),
           mTxRunner(new MultiTransactionRunner<void>(mPeersManager)),
@@ -551,6 +552,30 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
 
     LOG_INFO("Storage node is ready");
 }
+
+
+void ServerManager::shutdown() {
+    LOG_INFO("Shutting down storage node...");
+
+    // Unregister with the commit-manager
+
+    LOG_INFO("Unregistering with commit-manager...");
+
+    std::unique_ptr<ClusterState> clusterState;
+    std::unique_ptr<ClusterMeta> clusterMeta;
+    TransactionRunner::executeBlocking(mPeersManager, [this, &clusterState, &clusterMeta](ClientHandle& client) {
+        clusterState = std::move(client.startTransaction());
+        
+        // clusterMeta = std::move(client.unregisterNode(*clusterState->snapshot));
+        client.unregisterNode(*clusterState->snapshot, mToken);
+        
+        client.commit(*clusterState->snapshot);
+    });
+
+    // Base::shutdown();
+    // std::exit(0);
+}
+
 
 ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocket socket,
         const crossbow::string& data) {

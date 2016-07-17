@@ -52,8 +52,9 @@ std::unique_ptr<commitmanager::ClusterMeta> ClientHandle::registerNode(const com
     return mProcessor.registerNode(mFiber, snapshot, host, tag);
 }
 
-void ClientHandle::unregisterNode(crossbow::string host) {
-    return mProcessor.unregisterNode(mFiber, host);
+std::unique_ptr<commitmanager::ClusterMeta> ClientHandle::unregisterNode(const commitmanager::SnapshotDescriptor& snapshot,
+                                                                         crossbow::string host) {
+    return mProcessor.unregisterNode(mFiber, snapshot, host);
 }
 
 void ClientHandle::transferOwnership(crossbow::string fromHost, crossbow::string toHost) {
@@ -311,12 +312,14 @@ std::unique_ptr<commitmanager::ClusterMeta> BaseClientProcessor::registerNode(cr
     return registerResponse->get();
 }
 
-void BaseClientProcessor::unregisterNode(crossbow::infinio::Fiber& fiber, crossbow::string host) {
-    auto unregisterResponse = mCommitManagerSocket.unregisterNode(fiber, host);
+std::unique_ptr<commitmanager::ClusterMeta> BaseClientProcessor::unregisterNode(crossbow::infinio::Fiber& fiber, 
+                                                                                const commitmanager::SnapshotDescriptor& snapshot,
+                                                                                crossbow::string host) {
+    auto unregisterResponse = mCommitManagerSocket.unregisterNode(fiber, snapshot, host);
     if (auto& ec = unregisterResponse->error()) {
         LOG_ERROR("Error while unregistering [error = %1% %2%]", ec, ec.message());
     }
-    unregisterResponse->get();
+    return unregisterResponse->get();
 }
 
 void BaseClientProcessor::transferOwnership(crossbow::infinio::Fiber& fiber,

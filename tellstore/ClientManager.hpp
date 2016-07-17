@@ -97,7 +97,8 @@ public:
                                                              crossbow::string host, 
                                                              crossbow::string tag);
 
-    void unregisterNode(crossbow::string host);
+    std::unique_ptr<commitmanager::ClusterMeta> unregisterNode(const commitmanager::SnapshotDescriptor& snapshot,
+                                                               crossbow::string host);
 
     void transferOwnership(crossbow::string fromHost, crossbow::string toHost);
 
@@ -208,7 +209,9 @@ public:
                                                              crossbow::string host, 
                                                              crossbow::string tag);
     
-    void unregisterNode(crossbow::infinio::Fiber& fiber, crossbow::string host);
+    std::unique_ptr<commitmanager::ClusterMeta> unregisterNode(crossbow::infinio::Fiber& fiber, 
+                                                               const commitmanager::SnapshotDescriptor& snapshot,
+                                                               crossbow::string host);
 
     void transferOwnership(crossbow::infinio::Fiber& fiber, crossbow::string fromHost, crossbow::string toHost);
 

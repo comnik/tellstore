@@ -326,6 +326,13 @@ public:
                     const ServerConfig& config,
                     std::shared_ptr<ClientConfig> peersConfig );
 
+    ~ServerManager() {
+        shutdown();
+    }
+
+protected:
+    void shutdown();
+
 private:
     friend Base;
     friend class ServerSocket;
@@ -343,6 +350,8 @@ private:
     void transferKeys(crossbow::string tableName, commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
 
     void performTransfer(Transfer& transfer);
+
+    crossbow::string mToken;
 
     std::shared_ptr<ClientConfig> mPeersConfig;
 

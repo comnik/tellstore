@@ -59,12 +59,16 @@ int main(int argc, const char** argv) {
     Hash node1Key = node1Token -1 ; // a key guaranteed to lie inside node1's partition
     LOG_INFO("-- key 1 owner: %1%", *nodeRing.getNode(node1Key));
     LOG_INFO("-- previous owner: %1%", *nodeRing.getPreviousNode(node1Key));
-
-    LOG_INFO("\n");
-
+    
     Hash node2Key = node2Token - 1; // a key guaranteed to lie inside node2's partition
     LOG_INFO("-- key 2 owner: %1%", *nodeRing.getNode(node2Key));
     LOG_INFO("-- previous owner: %1%", *nodeRing.getPreviousNode(node2Key));
+    LOG_INFO("\n");
+
+    auto ranges = nodeRing.removeNode("0.0.0.0:7243");
+    for (const auto& range : ranges) {
+        LOG_INFO("\t[%1%, %2%] -> %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
+    }
 
     return 0;
 }

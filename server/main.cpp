@@ -119,12 +119,7 @@ int main(int argc, const char** argv) {
     ServerManager server(service, storage, serverConfig, peersConfig);
     service.run();
 
-    // LOG_INFO("Exiting TellStore server");
-
-    // TransactionRunner::executeBlocking(clusterManager, [&nodeToken](ClientHandle& client) {
-    //     LOG_INFO("Unregistering with commit-manager...");
-    //     client.unregisterNode(nodeToken);
-    // });
+    LOG_INFO("Exiting TellStore server");
     
     return 0;
 }
