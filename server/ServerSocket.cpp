@@ -35,7 +35,7 @@
 
 #include <set>
 #include <vector>
-
+#include <signal.h>
 
 namespace tell {
 namespace store {
@@ -43,6 +43,26 @@ namespace store {
 using namespace tell::commitmanager;
 using namespace std::placeholders;
 using HashRing_t = HashRing<crossbow::string>;
+
+
+static int SIGNAL_INTERRUPTED = 0;
+static void signalHandler(int signalValue) {
+    if (SIGNAL_INTERRUPTED == 0) {
+        LOG_INFO("Caught signal");
+        SIGNAL_INTERRUPTED = 1;
+    } else {
+        std::exit(0);
+    }
+}
+
+static void catchSignals(void) {
+    struct sigaction action;
+    action.sa_handler = signalHandler;
+    action.sa_flags = 0;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+}
 
 
 void ServerSocket::writeScanProgress(uint16_t scanId, bool done, size_t offset) {
@@ -120,6 +140,10 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
     default: {
         writeErrorResponse(messageId, error::unkown_request);
     } break;
+    }
+
+    if (SIGNAL_INTERRUPTED) {
+        manager().shutdown();
     }
 
 #ifdef NDEBUG
@@ -485,7 +509,8 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
           mStorage(storage),
           mMaxBatchSize(config.maxBatchSize),
           mScanBufferManager(service, config),
-          mMaxInflightScanBuffer(config.maxInflightScanBuffer) {
+          mMaxInflightScanBuffer(config.maxInflightScanBuffer),
+          mIsShuttingDown(false) {
     
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessors.emplace_back(service.createProcessor());
@@ -559,11 +584,20 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
         TransactionRunner::executeBlocking(mPeersManager, schemaTransferTx);
     }
 
+    // Setup signal handling
+    catchSignals();
+
     LOG_INFO("Storage node is ready");
 }
 
 
 void ServerManager::shutdown() {
+    if (mIsShuttingDown.load()) {
+        // Already shutting down
+        return;
+    }
+    mIsShuttingDown.store(true);
+
     LOG_INFO("Shutting down storage node...");
 
     // Unregister with the commit-manager

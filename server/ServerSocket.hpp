@@ -380,6 +380,8 @@ private:
 
     /// Map from Scan ID to the partition being transferred
     std::vector<std::unique_ptr<Transfer>> mTransfers;
+
+    std::atomic<bool> mIsShuttingDown;
 };
 
 } // namespace store
