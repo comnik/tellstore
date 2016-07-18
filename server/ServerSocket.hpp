@@ -257,6 +257,8 @@ private:
      */
     void handleScanProgress(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
+    void handleRequestTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
+
     virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
 
     /**
@@ -350,6 +352,12 @@ private:
     void transferKeys(crossbow::string tableName, commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
 
     void performTransfer(Transfer& transfer);
+
+    void requestTransfer(   const crossbow::string& host, 
+                            commitmanager::Hash rangeStart, 
+                            commitmanager::Hash rangeEnd, 
+                            uint64_t version, 
+                            ClientHandle& client );
 
     crossbow::string mToken;
 
