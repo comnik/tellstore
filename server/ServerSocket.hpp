@@ -324,7 +324,7 @@ public:
     ServerManager(  crossbow::infinio::InfinibandService& service,
                     Storage& storage, 
                     const ServerConfig& config,
-                    std::shared_ptr<ClientConfig> peersConfig );
+                    const ClientConfig& peersConfig );
 
     ~ServerManager() {
         shutdown();
@@ -353,7 +353,7 @@ private:
 
     crossbow::string mToken;
 
-    std::shared_ptr<ClientConfig> mPeersConfig;
+    ClientConfig mPeersConfig;
 
     ClientManager<void> mPeersManager;
 

@@ -112,8 +112,8 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initializing network service");
     crossbow::infinio::InfinibandService service(infinibandLimits);
 
-    auto peersConfig = std::make_shared<ClientConfig>();
-    peersConfig->commitManager = ClientConfig::parseCommitManager(directoryHost);
+    ClientConfig peersConfig;
+    peersConfig.commitManager = ClientConfig::parseCommitManager(directoryHost);
     
     LOG_INFO("Initialize network server");
     ServerManager server(service, storage, serverConfig, peersConfig);

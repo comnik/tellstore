@@ -191,8 +191,8 @@ public:
 
     std::shared_ptr<ModificationResponse> requestTransfer( const crossbow::string& host,
                                                            commitmanager::Hash rangeStart,
-                                                           commitmanager::Hash rangeEnd 
-                                                           const commitmanager::SnapshotDescriptor& snapshot );
+                                                           commitmanager::Hash rangeEnd,
+                                                           uint64_t version );
 
 private:
     BaseClientProcessor& mProcessor;
@@ -205,7 +205,7 @@ private:
 class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
     
-    void reloadConfig(ClientConfig& config);
+    void reloadConfig(const ClientConfig& config);
 
     void shutdown();
 
@@ -274,8 +274,8 @@ public:
                                                           const crossbow::string& host,
                                                           commitmanager::Hash rangeStart,
                                                           commitmanager::Hash rangeEnd,
-                                                          const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket[host]->requestTransfer(fiber, rangeStart, rangeEnd, snapshot);
+                                                          uint64_t version) {
+        return mTellStoreSocket[host]->requestTransfer(fiber, rangeStart, rangeEnd, version);
     }
 
     std::shared_ptr<ScanIterator> transferKeys( crossbow::infinio::Fiber& fiber,
@@ -293,7 +293,7 @@ public:
 
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service,
-                        std::shared_ptr<ClientConfig> config,
+                        const ClientConfig& config,
                         uint64_t processorNum);
 
     ~BaseClientProcessor() = default;
@@ -354,7 +354,7 @@ private:
         }
     }
 
-    std::shared_ptr<ClientConfig> mConfig;
+    ClientConfig mConfig;
 
     crossbow::infinio::InfinibandService& mService;
 
@@ -381,7 +381,7 @@ class ClientProcessor : public BaseClientProcessor {
 public:
     template <typename... Args>
     ClientProcessor(crossbow::infinio::InfinibandService& service,
-                    std::shared_ptr<ClientConfig> config,
+                    const ClientConfig& config,
                     uint64_t processorNum,
                     Args&&... contextArgs)
         : BaseClientProcessor(service, config, processorNum),
@@ -435,16 +435,16 @@ template <typename Context>
 class ClientManager : crossbow::non_copyable, crossbow::non_movable {
 public:
     template <typename... Args>
-    ClientManager(std::shared_ptr<ClientConfig> config, Args... contextArgs);
+    ClientManager(const ClientConfig& config, Args... contextArgs);
     ~ClientManager();
 
     void shutdown();
 
     template <typename... Args>
-    void lockConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs);
+    void lockConfig(ClientConfig& config, Args... contextArgs);
 
     template <typename... Args>
-    void reloadConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs);
+    void reloadConfig(const ClientConfig& config, Args... contextArgs);
 
     template <typename Fun>
     void execute(Fun fun);
@@ -468,8 +468,8 @@ private:
 
 template <typename Context>
 template <typename... Args>
-ClientManager<Context>::ClientManager(std::shared_ptr<ClientConfig> config, Args... contextArgs)
-        : mService(config->infinibandConfig) {
+ClientManager<Context>::ClientManager(const ClientConfig& config, Args... contextArgs)
+        : mService(config.infinibandConfig) {
     LOG_INFO("Starting client manager");
 
     // TODO Move the service thread into the Infiniband Service itself
@@ -489,23 +489,24 @@ ClientManager<Context>::~ClientManager() {
 
 template <typename Context>
 template <typename... Args>
-void ClientManager<Context>::lockConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs) {
+void ClientManager<Context>::lockConfig(ClientConfig& config, Args... contextArgs) {
     LOG_INFO("Loading and locking config...");
 
     reloadConfig(config, contextArgs...);
-    config->isLocked = true; 
+    config.isLocked = true;
 }
 
 template <typename Context>
 template <typename... Args>
-void ClientManager<Context>::reloadConfig(std::shared_ptr<ClientConfig> config, Args... contextArgs) {
-    LOG_INFO("Reloading config...");
-
+void ClientManager<Context>::reloadConfig(const ClientConfig& config, Args... contextArgs) {
     // Have to shutdown any existing connections first
-    shutdown();
+    if (mProcessor.size() > 0) {
+        LOG_INFO("Reloading config...");
+        shutdown();
+    }
 
-    mProcessor.reserve(config->numNetworkThreads);
-    for (decltype(config->numNetworkThreads) i = 0; i < config->numNetworkThreads; ++i) {
+    mProcessor.reserve(config.numNetworkThreads);
+    for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
     }
 }

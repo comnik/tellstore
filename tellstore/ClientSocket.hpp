@@ -397,7 +397,7 @@ public:
     std::shared_ptr<ModificationResponse> requestTransfer(  crossbow::infinio::Fiber& fiber,
                                                             commitmanager::Hash rangeStart,
                                                             commitmanager::Hash rangeEnd,
-                                                            const commitmanager::SnapshotDescriptor& snapshot );
+                                                            uint64_t version );
 
     void transferKeys(  commitmanager::Hash rangeStart,
                         commitmanager::Hash rangeEnd,

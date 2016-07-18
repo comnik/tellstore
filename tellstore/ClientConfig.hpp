@@ -54,6 +54,21 @@ public:
         infinibandConfig.completionQueueLength = 512;
     }
 
+    ClientConfig(const ClientConfig& other)
+            : commitManager(other.commitManager),
+              maxPendingResponses(other.maxPendingResponses),
+              maxBatchSize(other.maxBatchSize),
+              numNetworkThreads(other.numNetworkThreads),
+              numVirtualNodes(other.numVirtualNodes),
+              isLocked(other.isLocked) {
+
+        infinibandConfig.receiveBufferCount = other.infinibandConfig.receiveBufferCount;
+        infinibandConfig.sendBufferCount = other.infinibandConfig.sendBufferCount;
+        infinibandConfig.bufferLength = other.infinibandConfig.bufferLength;
+        infinibandConfig.sendQueueLength = other.infinibandConfig.sendQueueLength;
+        infinibandConfig.completionQueueLength = other.infinibandConfig.completionQueueLength;
+    }
+
     /// Configuration for the Infiniband devices
     crossbow::infinio::InfinibandLimits infinibandConfig;
 
@@ -78,7 +93,9 @@ public:
     // Returns the number of connected tellstore nodes
     size_t numStores() const { return tellStore.size(); }
 
-    std::vector<crossbow::infinio::Endpoint> getStores() { return tellStore; }
+    std::vector<crossbow::infinio::Endpoint> getStores() const { 
+        return tellStore; 
+    }
 
     void setStores(std::vector<crossbow::infinio::Endpoint> endpoints) {
         tellStore = endpoints;

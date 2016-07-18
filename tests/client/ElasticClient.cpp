@@ -81,7 +81,7 @@ private:
 
 class ElasticClient {
 public:
-    ElasticClient(  std::shared_ptr<ClientConfig> config,
+    ElasticClient(  ClientConfig& config,
                     size_t scanMemoryLength,
                     size_t numTables,
                     size_t numTuple, 
@@ -124,7 +124,7 @@ private:
     std::vector<Table> mTables;
 };
 
-ElasticClient::ElasticClient(std::shared_ptr<ClientConfig> config,
+ElasticClient::ElasticClient(ClientConfig& config,
                              size_t scanMemoryLength, 
                              size_t numTables,
                              size_t numTuple, 
@@ -668,7 +668,7 @@ int main(int argc, const char** argv) {
     size_t numTables = 2;
     size_t numTuple = 100ull;
     size_t numTransactions = 10;
-    auto clientConfig = std::make_shared<tell::store::ClientConfig>();
+    ClientConfig clientConfig;
     bool check = false;
     bool help = false;
     crossbow::string logLevel("DEBUG");
@@ -680,7 +680,7 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'m'>("memory", &scanMemoryLength),
             crossbow::program_options::value<'n'>("tuple", &numTuple),
             crossbow::program_options::value<'t'>("transactions", &numTransactions),
-            crossbow::program_options::value<-1>("network-threads", &clientConfig->numNetworkThreads,
+            crossbow::program_options::value<-1>("network-threads", &clientConfig.numNetworkThreads,
                     crossbow::program_options::tag::ignore_short<true>{}),
             crossbow::program_options::value<-2>("check", &check,
                     crossbow::program_options::tag::ignore_short<true>{}));
@@ -698,13 +698,13 @@ int main(int argc, const char** argv) {
         return 0;
     }
 
-    clientConfig->commitManager = ClientConfig::parseCommitManager(commitManagerHost);
+    clientConfig.commitManager = ClientConfig::parseCommitManager(commitManagerHost);
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore test client%1%", check ? " (Check)" : "");
-    LOG_INFO("--- Commit Manager: %1%", clientConfig->commitManager);
-    LOG_INFO("--- Network Threads: %1%", clientConfig->numNetworkThreads);
+    LOG_INFO("--- Commit Manager: %1%", clientConfig.commitManager);
+    LOG_INFO("--- Network Threads: %1%", clientConfig.numNetworkThreads);
     LOG_INFO("--- Scan Memory: %1%GB", double(scanMemoryLength) / double(1024 * 1024 * 1024));
     LOG_INFO("--- Number of tables: %1%", numTables);
     LOG_INFO("--- Number of tuples: %1%", numTuple);

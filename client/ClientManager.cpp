@@ -245,38 +245,38 @@ std::shared_ptr<ScanIterator> ClientHandle::transferKeys(commitmanager::Hash ran
 std::shared_ptr<ModificationResponse> ClientHandle::requestTransfer(const crossbow::string& host,
                                                                     commitmanager::Hash rangeStart,
                                                                     commitmanager::Hash rangeEnd,
-                                                                    const commitmanager::SnapshotDescriptor& snapshot) {
-    return mProcessor.requestTransfer(mFiber, host, rangeStart, rangeEnd, snapshot);
+                                                                    uint64_t version) {
+    return mProcessor.requestTransfer(mFiber, host, rangeStart, rangeEnd, version);
 }
 
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service,
-                                         std::shared_ptr<ClientConfig> config,
+                                         const ClientConfig& config,
                                          uint64_t processorNum) 
     : mConfig(config),
       mService(service),
       mIsUpdating(false),
       mCachedDirectoryVersion(0),
-      mNodeRing(config->numVirtualNodes),
+      mNodeRing(config.numVirtualNodes),
       mProcessor(service.createProcessor()),
-      mCommitManagerSocket(service.createSocket(*mProcessor), config->maxPendingResponses, config->maxBatchSize),
+      mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses, config.maxBatchSize),
       mProcessorNum(processorNum),
       mScanId(0u) {
 
-    reloadConfig(*config);
+    reloadConfig(config);
 }
 
-void BaseClientProcessor::reloadConfig(ClientConfig& config) {
+void BaseClientProcessor::reloadConfig(const ClientConfig& config) {
     if (config.isLocked) {
         LOG_DEBUG("Client config is locked, aborting reload.");
         return;
     }
 
-    LOG_INFO("Reloading processor config...");
+    LOG_DEBUG("Reloading processor config...");
 
     if (!mCommitManagerSocket.isConnected()) {
         mCommitManagerSocket.connect(config.commitManager);
     }
-    
+
     for (auto& ep : config.getStores()) {
         auto search = mTellStoreSocket.find(ep.getToken());
         if (search == mTellStoreSocket.end()) {
@@ -357,7 +357,7 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
             auto endpoints = ClientConfig::parseTellStore(clusterState->peers);
 
             // Create and load new configuration
-            ClientConfig config(*mConfig);
+            ClientConfig config(mConfig);
             config.setStores(endpoints);
 
             clusterState->numPeers = config.numStores();

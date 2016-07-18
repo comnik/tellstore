@@ -476,7 +476,7 @@ void ServerSocket::writeModificationResponse(crossbow::infinio::MessageId messag
 ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
                              Storage& storage,
                              const ServerConfig& config,
-                             std::shared_ptr<ClientConfig> peersConfig)
+                             const ClientConfig& peersConfig)
         : Base(service, config.port),
           mToken(config.nodeToken),
           mPeersConfig(peersConfig),
@@ -538,15 +538,15 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
         ownerEndpoints.emplace_back(crossbow::infinio::Endpoint::ipv4(), owner);
     }
 
-    mPeersConfig->setStores(ownerEndpoints);
+    mPeersConfig.setStores(ownerEndpoints);
 
-    if (mPeersConfig->numStores() > 0) {
+    if (mPeersConfig.numStores() > 0) {
         // Allocate scan memory
 
         size_t scanMemoryLength = 0x80000000ull;
         mScanMemory = std::move(mPeersManager.allocateScanMemory(
-            mPeersConfig->numStores(),
-            scanMemoryLength / mPeersConfig->numStores()
+            mPeersConfig.numStores(),
+            scanMemoryLength / mPeersConfig.numStores()
         ));
 
         // Re-initialize the ClientManager.
@@ -598,13 +598,13 @@ void ServerManager::shutdown() {
     }
 
     // Create and load new configuration
-    ClientConfig config(*mPeersConfig);
+    ClientConfig config(mPeersConfig);
     config.setStores(ownerEndpoints);
 
     mPeersManager.lockConfig(config);
 
     for (const auto& range : clusterMeta->ranges) {
-        auto tx = std::bind(&ServerManager::requestTransfer, this, range.owner, range.start, range.end, clusterState->snapshot, _1);
+        auto tx = std::bind(&ServerManager::requestTransfer, this, range.owner, range.start, range.end, clusterState->snapshot->version(), _1);
         mTxRunner->execute(tx);
     }
     
@@ -732,9 +732,9 @@ void ServerManager::transferSchema(ClientHandle& client) {
 void ServerManager::requestTransfer(const crossbow::string& host, 
                                     Hash rangeStart, 
                                     Hash rangeEnd, 
-                                    const SnapshotDescriptor& snapshot, 
+                                    uint64_t version, 
                                     ClientHandle& client) {
-    client.requestTransfer(host, rangeStart, rangeEnd, snapshot);
+    client.requestTransfer(host, rangeStart, rangeEnd, version);
 }
 
 /**
