@@ -109,6 +109,10 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
         handleKeyTransfer(messageId, request);
     } break;
 
+    case crossbow::to_underlying(RequestType::REQUEST_TRANSFER): {
+        handleRequestTransfer(messageId, request);
+    } break;
+
     case crossbow::to_underlying(RequestType::COMMIT): {
         // TODO Implement commit logic
     } break;
@@ -352,6 +356,11 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
+    // @TODO Do we need to distinguish between a regular scan and a key transfer
+    // on the serving node?
+}
+
+void ServerSocket::handleRequestTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     std::unique_ptr<Transfer> transfer(new Transfer);
 
     transfer->start = request.read<Hash>();
@@ -567,11 +576,38 @@ void ServerManager::shutdown() {
         clusterState = std::move(client.startTransaction());
         
         // clusterMeta = std::move(client.unregisterNode(*clusterState->snapshot));
-        client.unregisterNode(*clusterState->snapshot, mToken);
+        clusterMeta = std::move(client.unregisterNode(*clusterState->snapshot, mToken));
         
         client.commit(*clusterState->snapshot);
     });
 
+    // We unregistered successfully. This means, the commit manager should have 
+    // responded with new owners for the key ranges we are giving up.
+    // We will notify those owners, so that they can request the ranges from us.
+
+    std::set<crossbow::string> owners;
+    for (const auto& range : clusterMeta->ranges) {
+        LOG_INFO("\t[%1%, %2%] -> %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
+        owners.insert(range.owner);
+    }
+
+    std::vector<crossbow::infinio::Endpoint> ownerEndpoints;
+    ownerEndpoints.reserve(owners.size());
+    for (const auto& owner : owners) {
+        ownerEndpoints.emplace_back(crossbow::infinio::Endpoint::ipv4(), owner);
+    }
+
+    // Create and load new configuration
+    ClientConfig config(*mPeersConfig);
+    config.setStores(ownerEndpoints);
+
+    mPeersManager.lockConfig(config);
+
+    for (const auto& range : clusterMeta->ranges) {
+        auto tx = std::bind(&ServerManager::requestTransfer, this, range.owner, range.start, range.end, clusterState->snapshot, _1);
+        mTxRunner->execute(tx);
+    }
+    
     // Base::shutdown();
     // std::exit(0);
 }
@@ -688,6 +724,17 @@ void ServerManager::transferSchema(ClientHandle& client) {
             LOG_ERROR("\tCould not create table %1%", table.tableName());
         }            
     }
+}
+
+/**
+ * Describes a transaction to request a key transfer from a peer.
+ */
+void ServerManager::requestTransfer(const crossbow::string& host, 
+                                    Hash rangeStart, 
+                                    Hash rangeEnd, 
+                                    const SnapshotDescriptor& snapshot, 
+                                    ClientHandle& client) {
+    client.requestTransfer(host, rangeStart, rangeEnd, snapshot);
 }
 
 /**

@@ -451,6 +451,24 @@ void ClientSocket::scanProgress(uint16_t scanId, std::shared_ptr<ScanResponse> r
     });
 }
 
+std::shared_ptr<ModificationResponse> ClientSocket::requestTransfer(crossbow::infinio::Fiber& fiber,
+                                                                    commitmanager::Hash rangeStart,
+                                                                    commitmanager::Hash rangeEnd,
+                                                                    const commitmanager::SnapshotDescriptor& snapshot) {
+    auto response = std::make_shared<ModificationResponse>(fiber);
+    
+    uint32_t messageLength = 2*sizeof(commitmanager::Hash) + sizeof(uint64_t);
+    
+    sendRequest(response, RequestType::REQUEST_TRANSFER, messageLength, [rangeStart, rangeEnd, &snapshot]
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
+        message.write<commitmanager::Hash>(rangeStart);
+        message.write<commitmanager::Hash>(rangeEnd);
+        message.write<uint64_t>(snapshot.version());
+    });
+
+    return response;
+}
+
 void ClientSocket::transferKeys(commitmanager::Hash rangeStart,
                                 commitmanager::Hash rangeEnd, 
                                 uint16_t scanId,

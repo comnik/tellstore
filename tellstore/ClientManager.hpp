@@ -189,6 +189,11 @@ public:
                                                 uint32_t queryLength, 
                                                 const char* query );
 
+    std::shared_ptr<ModificationResponse> requestTransfer( const crossbow::string& host,
+                                                           commitmanager::Hash rangeStart,
+                                                           commitmanager::Hash rangeEnd 
+                                                           const commitmanager::SnapshotDescriptor& snapshot );
+
 private:
     BaseClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
@@ -264,6 +269,14 @@ public:
                                         const char* selection, 
                                         uint32_t queryLength,
                                         const char* query );
+
+    std::shared_ptr<ModificationResponse> requestTransfer(crossbow::infinio::Fiber& fiber, 
+                                                          const crossbow::string& host,
+                                                          commitmanager::Hash rangeStart,
+                                                          commitmanager::Hash rangeEnd,
+                                                          const commitmanager::SnapshotDescriptor& snapshot) {
+        return mTellStoreSocket[host]->requestTransfer(fiber, rangeStart, rangeEnd, snapshot);
+    }
 
     std::shared_ptr<ScanIterator> transferKeys( crossbow::infinio::Fiber& fiber,
                                                 commitmanager::Hash rangeStart,

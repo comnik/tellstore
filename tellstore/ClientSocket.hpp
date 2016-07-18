@@ -189,7 +189,7 @@ private:
 
 
 /**
- * @brief Response for a Modificatoin (insert, update, remove, revert) request
+ * @brief Response for a Modification (insert, update, remove, revert) request
  */
 class ModificationResponse final : public crossbow::infinio::RpcResponseResult<ModificationResponse, void> {
     using Base = crossbow::infinio::RpcResponseResult<ModificationResponse, void>;
@@ -393,6 +393,11 @@ public:
     void scanComplete(uint16_t scanId) {
         completeAsyncRequest(scanId);
     }
+
+    std::shared_ptr<ModificationResponse> requestTransfer(  crossbow::infinio::Fiber& fiber,
+                                                            commitmanager::Hash rangeStart,
+                                                            commitmanager::Hash rangeEnd,
+                                                            const commitmanager::SnapshotDescriptor& snapshot );
 
     void transferKeys(  commitmanager::Hash rangeStart,
                         commitmanager::Hash rangeEnd,

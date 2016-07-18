@@ -242,6 +242,13 @@ std::shared_ptr<ScanIterator> ClientHandle::transferKeys(commitmanager::Hash ran
     );
 }
 
+std::shared_ptr<ModificationResponse> ClientHandle::requestTransfer(const crossbow::string& host,
+                                                                    commitmanager::Hash rangeStart,
+                                                                    commitmanager::Hash rangeEnd,
+                                                                    const commitmanager::SnapshotDescriptor& snapshot) {
+    return mProcessor.requestTransfer(mFiber, host, rangeStart, rangeEnd, snapshot);
+}
+
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service,
                                          std::shared_ptr<ClientConfig> config,
                                          uint64_t processorNum) 
