@@ -827,7 +827,8 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
 void ServerManager::performTransfer(Transfer& transfer) {
     for (const auto& table : mStorage.getTables()) {
         auto tx = std::bind(&ServerManager::transferKeys, this, table->tableName(), transfer.start, transfer.end, _1);
-        mTxRunner->execute(tx);
+        // mTxRunner->execute(tx);
+        TransactionRunner::executeBlocking(mPeersManager, tx);
     }
 }
 
