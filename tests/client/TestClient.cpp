@@ -121,6 +121,7 @@ TestClient::TestClient(ClientConfig& config, size_t scanMemoryLength, size_t num
     // Load initial routing information, so we can estimate scan memory parameters and create tables
     TransactionRunner::executeBlocking(mManager, [this, scanMemoryLength](ClientHandle& client) {
         auto clusterState = client.startTransaction();
+        LOG_INFO("[TID %1%] Started transaction", clusterState->snapshot->version());
         client.commit(*clusterState->snapshot);
 
         this->mScanMemory = std::move(this->mManager.allocateScanMemory(
@@ -201,6 +202,7 @@ void TestClient::addTable(ClientHandle& client) {
     schema.addField(FieldType::BIGINT, "largenumber", true);
     schema.addField(FieldType::TEXT, "text1", true);
     schema.addField(FieldType::TEXT, "text2", true);
+    schema.addField(FieldType::HASH128, "__partition_key", true);
 
     auto startTime = std::chrono::steady_clock::now();
     mTable = client.createTable("testTable", schema);
@@ -219,13 +221,15 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     OperationTimer insertTimer;
     OperationTimer getTimer;
     auto startTime = std::chrono::steady_clock::now();
+    uint64_t errorCount = 0;
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         insertTimer.start();
         auto insertFuture = client.insert(mTable, key, *clusterState->snapshot, mTuple[key % mTuple.size()]);
         if (auto ec = insertFuture->error()) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
-            return;
+            ++errorCount;
+            break;
         }
         auto insertDuration = insertTimer.stop();
         LOG_DEBUG("Inserting tuple took %1%ns", insertDuration.count());
@@ -236,7 +240,8 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         if (!getFuture->waitForResult()) {
             auto& ec = getFuture->error();
             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
-            return;
+            ++errorCount;
+            break;
         }
         auto getDuration = getTimer.stop();
         LOG_DEBUG("Getting tuple took %1%ns", getDuration.count());
@@ -244,11 +249,13 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         auto tuple = getFuture->get();
         if (tuple->version() != clusterState->snapshot->version()) {
             LOG_ERROR("Tuple not in the version written");
-            return;
+            ++errorCount;
+            break;
         }
         if (!tuple->isNewest()) {
             LOG_ERROR("Tuple not the newest");
-            return;
+            ++errorCount;
+            break;
         }
 
         if (check) {
@@ -257,25 +264,29 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
             auto numberValue = mTable.field<int32_t>("number", tuple->data());
             if (numberValue != static_cast<int32_t>(key % mTuple.size())) {
                 LOG_ERROR("Number value of tuple %1% does not match [actual = %2%]", key, numberValue);
-                return;
+                ++errorCount;
+                break;
             }
 
             auto largeNumberValue = mTable.field<int64_t>("largenumber", tuple->data());
             if (largeNumberValue != gTupleLargenumber) {
                 LOG_ERROR("Largenumber value of tuple %1% does not match [actual = %2%]", key, largeNumberValue);
-                return;
+                ++errorCount;
+                break;
             }
 
             auto text1Value = mTable.field<crossbow::string>("text1", tuple->data());
             if (text1Value != gTupleText1) {
                 LOG_ERROR("Text1 value of tuple %1% does not match [actual = %2%]", key, text1Value);
-                return;
+                ++errorCount;
+                break;
             }
 
             auto text2Value = mTable.field<crossbow::string>("text2", tuple->data());
             if (text2Value != gTupleText2) {
                 LOG_ERROR("Text2 value of tuple %1% does not match [actual = %2%]", key, text2Value);
-                return;
+                ++errorCount;
+                break;
             }
 
             LOG_TRACE("Tuple check successful");
