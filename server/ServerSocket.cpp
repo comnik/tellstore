@@ -42,7 +42,6 @@ namespace store {
 
 using namespace tell::commitmanager;
 using namespace std::placeholders;
-using HashRing_t = HashRing<crossbow::string>;
 
 
 static int SIGNAL_INTERRUPTED = 0;
@@ -541,9 +540,9 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
     std::set<crossbow::string> owners;
     for (auto range : clusterMeta->ranges) {
         if (range.owner == config.nodeToken) {
-            LOG_INFO("\t-> first owner of range [%1%, %2%]", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end));
+            LOG_INFO("\t-> first owner of range [%1%, %2%]", HashRing::writeHash(range.start), HashRing::writeHash(range.end));
         } else {
-            LOG_INFO("\t-> request range [%1%, %2%] from %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
+            LOG_INFO("\t-> request range [%1%, %2%] from %3%", HashRing::writeHash(range.start), HashRing::writeHash(range.end), range.owner);
             
             owners.insert(range.owner);
 
@@ -621,7 +620,7 @@ void ServerManager::shutdown() {
 
     std::set<crossbow::string> owners;
     for (const auto& range : clusterMeta->ranges) {
-        LOG_INFO("\t[%1%, %2%] -> %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
+        LOG_INFO("\t[%1%, %2%] -> %3%", HashRing::writeHash(range.start), HashRing::writeHash(range.end), range.owner);
         owners.insert(range.owner);
     }
 

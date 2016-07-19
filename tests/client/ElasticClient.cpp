@@ -47,14 +47,13 @@
 
 using namespace tell;
 using namespace tell::store;
+using namespace tell::commitmanager;
 
 namespace {
 
 int64_t LARGE_NUMBER = 0x7FFFFFFF00000001;
 crossbow::string TEXT_1 = crossbow::string("Bacon ipsum dolor amet t-bone chicken prosciutto, cupim ribeye turkey bresaola leberkas bacon.");
 crossbow::string TEXT_2 = crossbow::string("Chuck pork loin ham hock tri-tip pork ball tip drumstick tongue. Jowl swine short loin, leberkas andouille pancetta strip steak doner ham bresaola.");
-
-using HashRing_t = tell::commitmanager::HashRing<crossbow::string>;
 
 
 class OperationTimer {
@@ -245,11 +244,11 @@ void ElasticClient::populate(ClientHandle& client) {
     for (uint64_t key = 1; key <= mNumTuple; ++key) {
         auto table = mTables[key % mNumTables];
         
-        auto partitionKey = HashRing_t::getPartitionToken(table.tableId(), key);
+        auto partitionKey = HashRing::getPartitionToken(table.tableId(), key);
         
-        LOG_TRACE("\tTuple %1% -> %2% (%3%)", key, table.tableName(), HashRing_t::writeHash(partitionKey));
+        LOG_TRACE("\tTuple %1% -> %2% (%3%)", key, table.tableName(), HashRing::writeHash(partitionKey));
         auto tuple = mTuple[key % mTuple.size()];
-        tuple["__partition_key"] = HashRing_t::getPartitionToken(table.tableId(), key);
+        tuple["__partition_key"] = HashRing::getPartitionToken(table.tableId(), key);
 
         auto insertFuture = client.insert(table, key, *clusterState->snapshot, tuple);
         if (auto ec = insertFuture->error()) {

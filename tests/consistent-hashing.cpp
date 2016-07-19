@@ -31,15 +31,13 @@
 using namespace tell::commitmanager;
 using namespace tell::store;
 
-using HashRing_t = HashRing<crossbow::string>;
 
-
-void dumpRanges(const HashRing_t& nodeRing) {
+void dumpRanges(const HashRing& nodeRing) {
     LOG_INFO("== Ranges ====================");
     for (const auto& nodeIt : nodeRing.getRing()) {
-        LOG_INFO("Node %1% ranges:", nodeIt.second);
-        for (const auto& range : nodeRing.getRanges(nodeIt.second)) {
-            LOG_INFO("\t[%1%, %2%]", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end));
+        LOG_INFO("Node %1% ranges:", nodeIt.second.owner);
+        for (const auto& range : nodeRing.getRanges(nodeIt.second.owner)) {
+            LOG_INFO("\t[%1%, %2%]", HashRing::writeHash(range.start), HashRing::writeHash(range.end));
         }
     }
 }
@@ -48,26 +46,28 @@ int main(int argc, const char** argv) {
     crossbow::string logLevel("INFO");
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
-    HashRing_t nodeRing(1);
+    HashRing nodeRing(1);
 
-    Hash node1Token = nodeRing.insertNode("0.0.0.0:7243", "0.0.0.0:7243");
+    Hash node1Token = nodeRing.insertNode("0.0.0.0:7243");
     dumpRanges(nodeRing);
 
-    Hash node2Token = nodeRing.insertNode("0.0.0.0:7244", "0.0.0.0:7244");
+    Hash node2Token = nodeRing.insertNode("0.0.0.0:7244");
     dumpRanges(nodeRing);
 
     Hash node1Key = node1Token -1 ; // a key guaranteed to lie inside node1's partition
-    LOG_INFO("-- key 1 owner: %1%", *nodeRing.getNode(node1Key));
-    LOG_INFO("-- previous owner: %1%", *nodeRing.getPreviousNode(node1Key));
+    auto partition1 = nodeRing.getNode(node1Key);
+    LOG_INFO("-- key 1 owner: %1%", partition1->owner);
+    LOG_INFO("-- previous owner: %1%", partition1->previousOwner);
     
     Hash node2Key = node2Token - 1; // a key guaranteed to lie inside node2's partition
-    LOG_INFO("-- key 2 owner: %1%", *nodeRing.getNode(node2Key));
-    LOG_INFO("-- previous owner: %1%", *nodeRing.getPreviousNode(node2Key));
+    auto partition2 = nodeRing.getNode(node2Key);
+    LOG_INFO("-- key 2 owner: %1%", partition2->owner);
+    LOG_INFO("-- previous owner: %1%", partition2->previousOwner);
     LOG_INFO("\n");
 
     auto ranges = nodeRing.removeNode("0.0.0.0:7243");
     for (const auto& range : ranges) {
-        LOG_INFO("\t[%1%, %2%] -> %3%", HashRing_t::writeHash(range.start), HashRing_t::writeHash(range.end), range.owner);
+        LOG_INFO("\t[%1%, %2%] -> %3%", HashRing::writeHash(range.start), HashRing::writeHash(range.end), range.owner);
     }
 
     return 0;

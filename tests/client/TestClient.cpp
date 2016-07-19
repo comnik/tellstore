@@ -46,7 +46,7 @@
 
 using namespace tell;
 using namespace tell::store;
-using HashRing_t = commitmanager::HashRing<crossbow::string>;
+using namespace tell::commitmanager;
 
 namespace {
 
@@ -232,7 +232,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         insertTimer.start();
         
         auto tupleData = mTuple[key % mTuple.size()];
-        tupleData["__partition_key"] = HashRing_t::getPartitionToken(mTable.tableId(), key);
+        tupleData["__partition_key"] = HashRing::getPartitionToken(mTable.tableId(), key);
 
         auto insertFuture = client.insert(mTable, key, *clusterState->snapshot, tupleData);
         if (auto ec = insertFuture->error()) {

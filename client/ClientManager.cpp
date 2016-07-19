@@ -20,6 +20,8 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+#include <commitmanager/HashRing.hpp>
+
 #include <tellstore/ClientManager.hpp>
 
 namespace tell {
@@ -256,7 +258,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
       mService(service),
       mIsUpdating(false),
       mCachedDirectoryVersion(0),
-      mNodeRing(config.numVirtualNodes),
+      mNodeRing(new HashRing_t(config.numVirtualNodes)),
       mProcessor(service.createProcessor()),
       mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses, config.maxBatchSize),
       mProcessorNum(processorNum),
@@ -360,20 +362,9 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
             reloadConfig(config);
 
             // Update thread-local routing information
-            mNodeRing.clear();
-            for (auto& ep : endpoints) {
-                Node node(ep.getToken());
-
-                // Check if the node is still bootstrapping
-                if (clusterState->bootstrappingPeers.find(node.token) != clusterState->bootstrappingPeers.end()) {
-                    node.isBootstrapping = true;
-                }
-
-                LOG_DEBUG("Inserting node %1% into hash ring (bootstrapping = %2%)", node.token, node.isBootstrapping);
-                mNodeRing.insertNode(node.token, node);
-            }
-
+            mNodeRing.swap(clusterState->hashRing);
             mCachedDirectoryVersion = clusterState->directoryVersion;
+            
             mIsUpdating.store(false);
         }
     }

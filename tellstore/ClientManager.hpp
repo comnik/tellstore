@@ -57,22 +57,12 @@
 namespace tell {
 namespace store {
 
+using HashRing_t = commitmanager::HashRing;
+
 struct ClientConfig;
 class BaseClientProcessor;
 class Record;
 
-struct Node {
-    bool isBootstrapping;
-    crossbow::string token;
-
-    Node(const crossbow::string& token) 
-        : isBootstrapping(false),
-          token(token) {}
-
-    Node(const Node& other)
-        : isBootstrapping(other.isBootstrapping),
-          token(other.token) {}
-};
 
 /**
  * @brief Class to interact with the TellStore from within a fiber
@@ -204,7 +194,6 @@ private:
  */
 class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
-    
     void reloadConfig(const ClientConfig& config);
 
     void shutdown();
@@ -305,16 +294,14 @@ protected:
     }
 
 private:
-    using HashRing_t = commitmanager::HashRing<Node>;
-
     /**
      * @brief The socket associated with the shard for the given partition token
      */
     store::ClientSocket* shard(commitmanager::Hash partitionToken) {
-        const Node* node = mNodeRing.getNode(partitionToken);
-        LOG_ASSERT(node != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+        auto partition = mNodeRing->getNode(partitionToken);
+        LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        return mTellStoreSocket[node->token].get();
+        return mTellStoreSocket[partition->owner].get();
     }
 
     store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
@@ -331,25 +318,24 @@ private:
                                                                    std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn) {
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         
-        const Node* node = mNodeRing.getNode(partitionToken);
-        LOG_ASSERT(node != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+        auto partition = mNodeRing->getNode(partitionToken);
+        LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        if (node->isBootstrapping) {
+        if (partition->isBootstrapping) {
             // first attempt on the bootstrapping node
-            auto nodeSocket = mTellStoreSocket[node->token].get();
+            auto nodeSocket = mTellStoreSocket[partition->owner].get();
             auto resp = reqFn(*nodeSocket);
 
             // but we might have to retry the request on the previous owner
-            auto prevNode = mNodeRing.getPreviousNode(partitionToken);
-            auto prevNodeSocket = mTellStoreSocket[prevNode->token].get();
+            auto prevNodeSocket = mTellStoreSocket[partition->previousOwner].get();
             auto retryResp = reqFn(*prevNodeSocket);
 
-            LOG_DEBUG("Attempted read on nodes %1% and %2%", node->token, prevNode->token);
+            LOG_DEBUG("Attempted read on nodes %1% and %2%", partition->owner, partition->previousOwner);
 
             return std::make_shared<ClusterResponse<GetResponse>>(resp, retryResp);
         } else {
             // nothing special here, we just have to wrap the response
-            auto nodeSocket = mTellStoreSocket[node->token].get();
+            auto nodeSocket = mTellStoreSocket[partition->owner].get();
             return std::make_shared<ClusterResponse<GetResponse>>(reqFn(*nodeSocket));
         }
     }
@@ -361,7 +347,7 @@ private:
     std::atomic<bool> mIsUpdating;
 
     uint64_t mCachedDirectoryVersion;
-    HashRing_t mNodeRing;
+    std::unique_ptr<HashRing_t> mNodeRing;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
