@@ -146,6 +146,15 @@ ElasticClient::ElasticClient(ClientConfig& config,
     });
 
     LOG_INFO("Initialized TellStore client");
+
+    for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
+        mTuple[i] = GenericTuple({
+            std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
+            std::make_pair<crossbow::string, boost::any>("largenumber", LARGE_NUMBER),
+            std::make_pair<crossbow::string, boost::any>("text1", TEXT_1),
+            std::make_pair<crossbow::string, boost::any>("text2", TEXT_2)
+        });
+    }
 }
 
 void ElasticClient::run(bool check) {
@@ -171,11 +180,17 @@ void ElasticClient::run(bool check) {
     // }
     // runner.wait();
 
-    std::cout << "Press any key to start verification";
-    std::cin >> cont;
+    while (true) {
+        std::cout << "Press any key to start verification";
+        std::cin >> cont;
 
-    LOG_INFO("Verifying...");
-    TransactionRunner::executeBlocking(mManager, std::bind(&ElasticClient::verify, this, std::placeholders::_1));
+        if (cont == 'x') {
+            break;
+        }
+
+        LOG_INFO("Verifying...");
+        TransactionRunner::executeBlocking(mManager, std::bind(&ElasticClient::verify, this, std::placeholders::_1));
+    }
 
     // LOG_INFO("Starting test scan transaction(s)");
     // TransactionRunner::executeBlocking(mManager, std::bind(&ElasticClient::executeScan, this, std::placeholders::_1, 1.0, check));
@@ -233,13 +248,8 @@ void ElasticClient::populate(ClientHandle& client) {
         auto partitionKey = HashRing_t::getPartitionToken(table.tableId(), key);
         
         LOG_TRACE("\tTuple %1% -> %2% (%3%)", key, table.tableName(), HashRing_t::writeHash(partitionKey));
-        auto tuple = GenericTuple({
-            std::make_pair<crossbow::string, boost::any>("__partition_key", partitionKey),
-            std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(key)),
-            std::make_pair<crossbow::string, boost::any>("largenumber", LARGE_NUMBER),
-            std::make_pair<crossbow::string, boost::any>("text1", TEXT_1),
-            std::make_pair<crossbow::string, boost::any>("text2", TEXT_2)
-        });
+        auto tuple = mTuple[key % mTuple.size()];
+        tuple["__partition_key"] = HashRing_t::getPartitionToken(table.tableId(), key);
 
         auto insertFuture = client.insert(table, key, *clusterState->snapshot, tuple);
         if (auto ec = insertFuture->error()) {
@@ -255,7 +265,7 @@ void ElasticClient::populate(ClientHandle& client) {
 }
 
 /**
- * Ensures that tuples are still available at the destination node.
+ * Ensures that tuples are available in general.
  */
 void ElasticClient::verify(ClientHandle& client) {
     auto startTime = std::chrono::steady_clock::now();
@@ -268,7 +278,7 @@ void ElasticClient::verify(ClientHandle& client) {
         auto getFuture = client.get(table, key, *clusterState->snapshot);
         if (!getFuture->waitForResult()) {
             auto& ec = getFuture->error();
-            LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
+            LOG_ERROR("Error getting tuple %1% [error = %2% %3%]", key, ec, ec.message());
             return;
         } else {
             auto tuple = getFuture->get();
@@ -283,6 +293,7 @@ void ElasticClient::verify(ClientHandle& client) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     LOG_INFO("Verification took %1%ms", duration.count());
 }
+
 
 // void ElasticClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {
 //     auto clusterState = client.startTransaction();
