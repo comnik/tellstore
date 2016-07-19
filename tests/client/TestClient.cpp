@@ -20,6 +20,8 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+#include <commitmanager/HashRing.hpp>
+
 #include <tellstore/ClientConfig.hpp>
 #include <tellstore/ClientManager.hpp>
 #include <tellstore/GenericTuple.hpp>
@@ -44,6 +46,7 @@
 
 using namespace tell;
 using namespace tell::store;
+using HashRing_t = commitmanager::HashRing<crossbow::string>;
 
 namespace {
 
@@ -153,8 +156,10 @@ void TestClient::run(bool check) {
     for (decltype(mNumTransactions) i = 0; i < mNumTransactions; ++i) {
         auto startRange = i * mNumTuple;
         auto endRange = startRange + mNumTuple;
-        runner.execute(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange,
-                check));
+        auto tx = std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange, check);
+        
+        // runner.execute();
+        TransactionRunner::executeBlocking(mManager, tx);
     }
     runner.wait();
 
@@ -225,7 +230,11 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         insertTimer.start();
-        auto insertFuture = client.insert(mTable, key, *clusterState->snapshot, mTuple[key % mTuple.size()]);
+        
+        auto tupleData = mTuple[key % mTuple.size()];
+        tupleData["__partition_key"] = HashRing_t::getPartitionToken(mTable.tableId(), key);
+
+        auto insertFuture = client.insert(mTable, key, *clusterState->snapshot, tupleData);
         if (auto ec = insertFuture->error()) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
             ++errorCount;
