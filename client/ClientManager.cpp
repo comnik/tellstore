@@ -266,11 +266,6 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
 }
 
 void BaseClientProcessor::reloadConfig(const ClientConfig& config) {
-    if (config.isLocked) {
-        LOG_DEBUG("Client config is locked, aborting reload.");
-        return;
-    }
-
     LOG_DEBUG("Reloading processor config...");
 
     if (!mCommitManagerSocket.isConnected()) {
@@ -347,7 +342,7 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
     
     LOG_DEBUG("Received directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
 
-    if (clusterState->directoryVersion > mCachedDirectoryVersion) {
+    if (clusterState->directoryVersion > mCachedDirectoryVersion && !mConfig.isLocked) {
         if (mIsUpdating.exchange(true)) {
             LOG_INFO("Someone is already updating the configuration.");
             // There is a already someone updating the partition information, wait till he's done

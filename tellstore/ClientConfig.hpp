@@ -87,7 +87,7 @@ public:
     /// Number of virtual nodes assigned to each node in the hash ring
     size_t numVirtualNodes;
 
-    /// Indicates wether the configuration may be reloaded
+    /// Indicates wether to re-load partitioning information on startTransaction()
     bool isLocked;
 
     // Returns the number of connected tellstore nodes

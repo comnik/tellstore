@@ -775,53 +775,50 @@ void ServerManager::requestTransfer(const crossbow::string& host,
  * Describes a key transfer transaction.
  */
 void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
-    try {
-        auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
 
-        auto table = client.getTable(tableName)->get();
+    auto table = client.getTable(tableName)->get();
 
-        auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
+    auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
 
-        auto scanIterator = client.scan(
-            table,
-            *clusterState->snapshot,
-            *mScanMemory,
-            ScanQueryType::FULL,
-            SELECTION_LENGTH,
-            transferQuery.get(),
-            0x0u,
-            nullptr
-        );
+    auto scanIterator = client.scan(
+        table,
+        *clusterState->snapshot,
+        *mScanMemory,
+        ScanQueryType::FULL,
+        SELECTION_LENGTH,
+        transferQuery.get(),
+        0x0u,
+        nullptr
+    );
 
-        size_t scanCount = 0x0u;
-        while (scanIterator->hasNext()) {
-            uint64_t key;
-            const char* tuple;
-            size_t tupleLength;
-            std::tie(key, tuple, tupleLength) = scanIterator->next();
-            ++scanCount;
+    size_t errorCount = 0x0u;
+    size_t scanCount = 0x0u;
+    while (scanIterator->hasNext()) {
+        uint64_t key;
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(key, tuple, tupleLength) = scanIterator->next();
+        ++scanCount;
 
-            LOG_INFO("\treceived tuple %1%", key);
+        LOG_INFO("\treceived tuple %1%", key);
 
-            auto tableId = table.tableId();
-            auto ec = mStorage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);
-            if (ec != 0) {
-                LOG_ERROR("\tInsertion failed with error code %1%", ec);
-            }
+        auto tableId = table.tableId();
+        auto ec = mStorage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);
+        if (ec != 0) {
+            LOG_ERROR("\tInsertion failed with error code %1%", ec);
+            ++errorCount;
         }
-
-        if (scanIterator->error()) {
-            auto& ec = scanIterator->error();
-            LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
-            return;
-        }
-
-        client.commit(*clusterState->snapshot);
-
-        LOG_INFO("[TID %1%] Received %2% tuples in total", clusterState->snapshot->version(), scanCount);
-    } catch (const std::system_error& e) {
-        LOG_INFO("Caught system_error with code %1% meaning %2%", e.code(), e.what());
     }
+
+    if (scanIterator->error()) {
+        auto& ec = scanIterator->error();
+        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+    }
+
+    client.commit(*clusterState->snapshot);
+
+    LOG_INFO("[TID %1%] Received %2% tuples in total, %3% errors", clusterState->snapshot->version(), scanCount, errorCount);
 }
 
 /**

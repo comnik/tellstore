@@ -492,8 +492,8 @@ template <typename... Args>
 void ClientManager<Context>::lockConfig(ClientConfig& config, Args... contextArgs) {
     LOG_INFO("Loading and locking config...");
 
-    reloadConfig(config, contextArgs...);
     config.isLocked = true;
+    reloadConfig(config, contextArgs...);
 }
 
 template <typename Context>
