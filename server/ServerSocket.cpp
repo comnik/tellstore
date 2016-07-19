@@ -467,10 +467,12 @@ void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossb
             }
             i = res.first;
         }
+        // @TODO only check after calling f?
         manager().checkTransfers(*i->second);
         f(*i->second);
     } else if (hasDescriptor) {
         auto snapshot = SnapshotDescriptor::deserialize(message);
+        // @TODO only check after calling f?
         manager().checkTransfers(*snapshot);
         f(*snapshot);
     } else {
