@@ -567,7 +567,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
         ownerEndpoints.emplace_back(crossbow::infinio::Endpoint::ipv4(), owner);
     }
 
-    mPeersConfig.setStores(ownerEndpoints);
+    mPeersConfig.tellStore = ownerEndpoints;
 
     if (mPeersConfig.numStores() > 0) {
         // Allocate scan memory
@@ -637,7 +637,7 @@ void ServerManager::shutdown() {
 
     // Create and load new configuration
     ClientConfig config(mPeersConfig);
-    config.setStores(ownerEndpoints);
+    config.tellStore = ownerEndpoints;
 
     mPeersManager.lockConfig(config);
 

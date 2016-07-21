@@ -355,7 +355,7 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
 
             // Create and load new configuration
             ClientConfig config(mConfig);
-            config.setStores(endpoints);
+            config.tellStore = endpoints;
 
             clusterState->numPeers = config.numStores();
             

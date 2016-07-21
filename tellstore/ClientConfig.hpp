@@ -97,14 +97,8 @@ public:
         return tellStore; 
     }
 
-    void setStores(std::vector<crossbow::infinio::Endpoint> endpoints) {
-        tellStore = endpoints;
-    }
-
-private:
     /// Address of the TellStore to connect to
     std::vector<crossbow::infinio::Endpoint> tellStore;    
-
 };
 
 std::vector<crossbow::infinio::Endpoint> ClientConfig::parseTellStore(const crossbow::string& host) {
