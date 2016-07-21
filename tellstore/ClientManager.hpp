@@ -90,7 +90,7 @@ public:
     std::unique_ptr<commitmanager::ClusterMeta> unregisterNode(const commitmanager::SnapshotDescriptor& snapshot,
                                                                crossbow::string host);
 
-    void transferOwnership(crossbow::string fromHost, crossbow::string toHost);
+    void transferOwnership(commitmanager::Hash rangeEnd, crossbow::string host);
 
     std::unique_ptr<commitmanager::ClusterState> startTransaction(TransactionType type = TransactionType::READ_WRITE);
 
@@ -207,7 +207,9 @@ public:
                                                                const commitmanager::SnapshotDescriptor& snapshot,
                                                                crossbow::string host);
 
-    void transferOwnership(crossbow::infinio::Fiber& fiber, crossbow::string fromHost, crossbow::string toHost);
+    void transferOwnership( crossbow::infinio::Fiber& fiber, 
+                            commitmanager::Hash rangeEnd, 
+                            crossbow::string host );
 
     std::unique_ptr<commitmanager::ClusterState> start(crossbow::infinio::Fiber& fiber, TransactionType type);
 

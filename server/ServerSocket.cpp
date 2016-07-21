@@ -815,6 +815,10 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
     if (scanIterator->error()) {
         auto& ec = scanIterator->error();
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+    } else if (errorCount > 0) {
+        LOG_ERROR("There were errors.");
+    } else {
+        client.transferOwnership(rangeEnd, mToken);
     }
 
     client.commit(*clusterState->snapshot);
