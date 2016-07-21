@@ -226,7 +226,7 @@ std::shared_ptr<ScanIterator> ClientHandle::transferKeys(commitmanager::Hash ran
                                                          uint32_t queryLength, 
                                                          const char* query) {
     // @TODO Is this necessary for key transfers?
-    checkTableType(table, TableType::TRANSACTIONAL);
+    // checkTableType(table, TableType::TRANSACTIONAL);
 
     return mProcessor.transferKeys(
         mFiber,

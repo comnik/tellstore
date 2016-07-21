@@ -379,8 +379,11 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
-    // @TODO Do we need to distinguish between a regular scan and a key transfer
-    // on the serving node?
+    auto rangeStart = request.read<commitmanager::Hash>();
+    auto rangeEnd = request.read<commitmanager::Hash>();
+    auto version = request.read<uint64_t>();
+
+    handleScan(messageId, request);
 }
 
 void ServerSocket::handleRequestTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
@@ -782,7 +785,9 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
 
     auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
 
-    auto scanIterator = client.scan(
+    auto scanIterator = client.transferKeys(
+        rangeStart,
+        rangeEnd,
         table,
         *clusterState->snapshot,
         *mScanMemory,
