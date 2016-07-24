@@ -337,17 +337,29 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
     handleSnapshot(messageId, request,
             [this, messageId, tableId, &remoteRegion, selectionLength, &selection, queryType, queryLength, &query]
             (const SnapshotDescriptor& snapshot) {
+
         auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
 
         // Copy snapshot descriptor
         auto scanSnapshot = SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
                 snapshot.baseVersion(), snapshot.version(), snapshot.data());
-
+        
         auto table = mStorage.getTable(tableId);
 
-        std::unique_ptr<ServerScanQuery> scanData(new ServerScanQuery(scanId, queryType, std::move(selection),
-                selectionLength, std::move(query), queryLength, std::move(scanSnapshot), table->record(),
-                manager().scanBufferManager(), std::move(remoteRegion), *this));
+        std::unique_ptr<ServerScanQuery> scanData(
+            new ServerScanQuery(scanId, 
+                                queryType, 
+                                std::move(selection),
+                                selectionLength, 
+                                std::move(query), 
+                                queryLength, 
+                                std::move(scanSnapshot), 
+                                table->record(),
+                                manager().scanBufferManager(), 
+                                std::move(remoteRegion), 
+                                *this)
+        );
+
         auto scanDataPtr = scanData.get();
         auto res = mScans.emplace(scanId, std::move(scanData));
         if (!res.second) {
@@ -686,7 +698,6 @@ void ServerManager::checkTransfer(Transfer& transfer, const SnapshotDescriptor& 
 }
 
 void ServerManager::checkTransfers(const SnapshotDescriptor& snapshot) {
-    LOG_TRACE("Checking %1% queued transfers against %2%", mTransfers.size(), snapshot.lowestActiveVersion());
     // Check the server managers own queued transfers
     for (const auto& transfer : mTransfers) {
         checkTransfer(*transfer, snapshot);

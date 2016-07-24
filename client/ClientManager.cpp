@@ -342,9 +342,9 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
     auto clusterState = startResponse->get();
     
-    LOG_DEBUG("Received directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
-
     if (clusterState->directoryVersion > mCachedDirectoryVersion && !mConfig.isLocked) {
+        LOG_INFO("Updating directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
+
         if (mIsUpdating.exchange(true)) {
             LOG_INFO("Someone is already updating the configuration.");
             // There is a already someone updating the partition information, wait till he's done
