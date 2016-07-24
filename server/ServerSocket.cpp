@@ -716,8 +716,8 @@ std::unique_ptr<char[]> createKeyTransferQuery(Table& table, Hash rangeStart, Ha
     
     // Selection on the partition key
     Record::id_t keyField;
-    table.record().idOf("__partition_key", keyField);
-    LOG_ASSERT(keyField >= 0, "Schema must have an partition key defined.");
+    bool hasPartKeyField = table.record().idOf("__partition_key", keyField);
+    LOG_ASSERT(hasPartKeyField == true, "Schema must have a partition key field.");
 
     selectionWriter.write<uint16_t>(keyField);      // -1 is the fixed id of the tell key field
     selectionWriter.write<uint16_t>(0x2u);          // number of predicates
