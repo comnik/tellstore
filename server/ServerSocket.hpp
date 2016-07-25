@@ -351,6 +351,8 @@ private:
     void transferSchema(ClientHandle& client);
     void transferKeys(crossbow::string tableName, commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
 
+    void transferOwnership(commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
+
     void performTransfer(Transfer& transfer);
 
     void requestTransfer(   const crossbow::string& host, 

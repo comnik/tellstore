@@ -833,13 +833,23 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
     } else if (errorCount > 0) {
         LOG_ERROR("There were errors.");
-    } else {
-        client.transferOwnership(rangeEnd, mToken);
+        std::exit(1);
     }
 
     client.commit(*clusterState->snapshot);
 
     LOG_INFO("[TID %1%] Received %2% tuples in total, %3% errors", clusterState->snapshot->version(), scanCount, errorCount);
+}
+
+/**
+ * Acknowledges the successful transfer of a partition.
+ */
+void ServerManager::transferOwnership(Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
+    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+
+    client.transferOwnership(rangeEnd, mToken);
+
+    client.commit(*clusterState->snapshot);
 }
 
 /**
@@ -852,6 +862,9 @@ void ServerManager::performTransfer(Transfer& transfer) {
         // mTxRunner->execute(tx);
         TransactionRunner::executeBlocking(mPeersManager, tx);
     }
+
+    auto ack = std::bind(&ServerManager::transferOwnership, this, transfer.start, transfer.end, _1);
+    TransactionRunner::executeBlocking(mPeersManager, ack);
 }
 
 
