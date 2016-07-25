@@ -207,7 +207,6 @@ void TestClient::addTable(ClientHandle& client) {
     schema.addField(FieldType::BIGINT, "largenumber", true);
     schema.addField(FieldType::TEXT, "text1", true);
     schema.addField(FieldType::TEXT, "text2", true);
-    schema.addField(FieldType::HASH128, "__partition_key", true);
 
     auto startTime = std::chrono::steady_clock::now();
     mTable = client.createTable("testTable", schema);
@@ -232,7 +231,6 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         insertTimer.start();
         
         auto tupleData = mTuple[key % mTuple.size()];
-        tupleData["__partition_key"] = HashRing::getPartitionToken(mTable.tableId(), key);
 
         auto insertFuture = client.insert(mTable, key, *clusterState->snapshot, tupleData);
         if (auto ec = insertFuture->error()) {

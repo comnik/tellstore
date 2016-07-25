@@ -31,6 +31,8 @@ public:
     virtual ~AbstractTuple();
     virtual size_t size() const = 0;
     virtual void serialize(char* dest) const = 0;
+    
+    virtual void setPartitionToken(unsigned __int128 token) = 0;
 };
 
 } // namespace store

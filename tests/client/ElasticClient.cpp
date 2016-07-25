@@ -217,7 +217,6 @@ void ElasticClient::shutdown() {
 
 void ElasticClient::createSchema(ClientHandle& client) {
     Schema schema(TableType::TRANSACTIONAL);
-    schema.addField(FieldType::HASH128, "__partition_key", true);
     schema.addField(FieldType::INT, "number", true);
     schema.addField(FieldType::BIGINT, "largenumber", true);
     schema.addField(FieldType::TEXT, "text1", true);
@@ -248,7 +247,6 @@ void ElasticClient::populate(ClientHandle& client) {
         
         LOG_TRACE("\tTuple %1% -> %2% (%3%)", key, table.tableName(), HashRing::writeHash(partitionKey));
         auto tuple = mTuple[key % mTuple.size()];
-        tuple["__partition_key"] = HashRing::getPartitionToken(table.tableId(), key);
 
         auto insertFuture = client.insert(table, key, *clusterState->snapshot, tuple);
         if (auto ec = insertFuture->error()) {

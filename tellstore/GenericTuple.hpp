@@ -50,6 +50,10 @@ public:
     virtual size_t size() const override;
 
     virtual void serialize(char* dest) const override;
+
+    void setPartitionToken(unsigned __int128 token) {
+        mTuple["__partition_token"] = token;
+    }
 };
 
 } // namespace store

@@ -317,10 +317,12 @@ private:
     std::vector<Field> mVarSizeFields;
     IndexMap mIndexes;
 public:
-    Schema() = default;
+    Schema()
+            : Schema(TableType::UNKNOWN) {}
 
     Schema(TableType type)
             : mType(type) {
+        addField(FieldType::HASH128, "__partition_token", false);
     }
 
     Schema(const Schema&) = default;

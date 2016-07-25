@@ -115,7 +115,7 @@ public:
     std::shared_ptr<ModificationResponse> insert(   const Table& table,
                                                     uint64_t key,
                                                     uint64_t version,
-                                                    const AbstractTuple& tuple );
+                                                    AbstractTuple& tuple );
 
     std::shared_ptr<ModificationResponse> insert(   const Table& table,
                                                     uint64_t key,
@@ -125,7 +125,7 @@ public:
     std::shared_ptr<ModificationResponse> insert(   const Table& table,
                                                     uint64_t key,
                                                     const commitmanager::SnapshotDescriptor& snapshot, 
-                                                    const AbstractTuple& tuple );
+                                                    AbstractTuple& tuple );
 
     std::shared_ptr<ModificationResponse> update(   const Table& table,
                                                     uint64_t key,
@@ -231,7 +231,9 @@ public:
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
+            const commitmanager::SnapshotDescriptor& snapshot, AbstractTuple& tuple) {
+        
+        tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
         return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
     }
 
