@@ -321,9 +321,7 @@ public:
             : Schema(TableType::UNKNOWN) {}
 
     Schema(TableType type)
-            : mType(type) {
-        addField(FieldType::HASH128, "__partition_token", false);
-    }
+            : mType(type) {}
 
     Schema(const Schema&) = default;
     Schema(Schema&& schema) = default;
