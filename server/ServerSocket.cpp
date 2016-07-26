@@ -822,6 +822,8 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
 
         auto tableId = table.tableId();
         auto ec = mStorage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);
+        
+        // @TODO Ignore errors due to write collisions, simply discard the incoming write
         if (ec != 0) {
             LOG_ERROR("\tInsertion failed with error code %1%", ec);
             ++errorCount;

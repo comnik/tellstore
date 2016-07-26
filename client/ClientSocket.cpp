@@ -489,7 +489,10 @@ void ClientSocket::transferKeys(commitmanager::Hash rangeStart,
         return;
     }
 
-    uint32_t messageLength = 2*sizeof(commitmanager::Hash) + 7*sizeof(uint64_t) + selectionLength + queryLength;
+    uint32_t messageLength =  2*sizeof(commitmanager::Hash) 
+                            + 7*sizeof(uint64_t) 
+                            + selectionLength 
+                            + queryLength;
     messageLength = crossbow::align(messageLength, sizeof(uint64_t));
     messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 

@@ -244,7 +244,6 @@ Record::Record(Schema schema)
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const {
     auto result = mStaticSize;
-
     // Iterate over all variable sized fields
     for (auto i = std::next(mFieldMetaData.begin(), mSchema.fixedSizeFields().size()); i != mFieldMetaData.end(); ++i) {
         auto& field = i->field;

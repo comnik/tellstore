@@ -221,7 +221,7 @@ void ElasticClient::createSchema(ClientHandle& client) {
     schema.addField(FieldType::BIGINT, "largenumber", true);
     schema.addField(FieldType::TEXT, "text1", true);
     schema.addField(FieldType::TEXT, "text2", true);
-    schema.addField(FieldType::HASH128, "__partition_token", true);
+    schema.addField(FieldType::HASH128, "__partition_token", false);
 
     auto startTime = std::chrono::steady_clock::now();
     LOG_INFO("Creating %1% remote tables...", mNumTables);
