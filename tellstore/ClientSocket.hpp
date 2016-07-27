@@ -77,16 +77,22 @@ public:
             // No retry set
             return mResponse;
         } else {
-            // First we have to wait for the original request to finish
-            // and see if it fails
-            if (!mResponse->waitForResult()) {
+            // First we have to wait for the original request to finish and see if it fails
+            bool destSucceeded = mResponse->waitForResult();
+            if (destSucceeded) {
+                return mResponse;                
+            } else {
                 auto& ec = mResponse->error();
-                LOG_DEBUG("ClusterResponse caught error %1% (%2%)", ec, ec.message());
+                LOG_INFO("ClusterResponse caught error %1% (%2%)", ec, ec.message());
+
+                bool srcSucceeded = mRetryResponse->waitForResult();
+                if (!srcSucceeded) {
+                    auto& ec = mRetryResponse->error();
+                    LOG_INFO("Retry response failed with error %1% (%2%)", ec, ec.message());
+                }
 
                 return mRetryResponse;
-            } else {
-                return mResponse;
-            }
+            }            
         }
     }
     

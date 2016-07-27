@@ -828,7 +828,8 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
             LOG_INFO("\t\t %1% @ %2% (%3%) (%4%)", key, clusterState->snapshot->version(), HashRing::writeHash(partToken), partToken <= transfer.end);
         }
         
-        auto ec = mStorage.insert(localTableId, key, tupleLength, tuple, *clusterState->snapshot);
+        auto snapshot = client.createNonTransactionalSnapshot(0);
+        auto ec = mStorage.insert(localTableId, key, tupleLength, tuple, *snapshot);
         
         // @TODO Ignore errors due to write collisions, simply discard the incoming write
         if (ec != 0) {

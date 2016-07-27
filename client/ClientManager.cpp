@@ -341,13 +341,13 @@ std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow
     auto clusterState = startResponse->get();
     
     if (clusterState->directoryVersion > mCachedDirectoryVersion && !mConfig.isLocked) {
-        LOG_INFO("Updating directory information @ %1% (cached is %2%)", clusterState->directoryVersion, mCachedDirectoryVersion);
-
         if (mIsUpdating.exchange(true)) {
             LOG_INFO("Someone is already updating the configuration.");
             // There is a already someone updating the partition information, wait till he's done
             // while (mIsUpdating.load());
         } else {
+            LOG_INFO("Updating directory @ %1% (cached is %2%, peers: %3%)", clusterState->directoryVersion, mCachedDirectoryVersion, clusterState->peers);
+        
             // We are the first thread to update the partition information
             auto endpoints = ClientConfig::parseTellStore(clusterState->peers);
 

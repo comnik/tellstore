@@ -158,7 +158,7 @@ void TestClient::run(bool check) {
         auto endRange = startRange + mNumTuple;
         auto tx = std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange, check);
         
-        // runner.execute();
+        // runner.execute(tx);
         TransactionRunner::executeBlocking(mManager, tx);
     }
     runner.wait();

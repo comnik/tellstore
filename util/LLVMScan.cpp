@@ -227,7 +227,9 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
 
                     case FieldType::HASH128: {
                         queryReader.advance(6);
-                        uint64_t value[] = {queryReader.read<uint64_t>(), queryReader.read<uint64_t>()};
+                        auto lowerBits = queryReader.read<uint64_t>();
+                        auto upperBits = queryReader.read<uint64_t>();
+                        uint64_t value[] = {lowerBits, upperBits};
                         auto val = llvm::ArrayRef<uint64_t>(value, 16);
 
                         predicateAst.fixed.value = llvm::ConstantInt::get(builder.getInt128Ty(), llvm::APInt(128, val));
