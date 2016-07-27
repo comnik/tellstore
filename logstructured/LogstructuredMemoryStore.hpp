@@ -63,6 +63,12 @@ public:
               mHashMap(config.hashMapCapacity) {
     }
 
+    bool createTable(const uint64_t tableId,
+                     const crossbow::string &name,
+                     const Schema& schema) {
+        return mTableManager.createTable(tableId, name, schema, mVersionManager, mHashMap);
+    }
+
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
         return mTableManager.createTable(name, schema, idx, mVersionManager, mHashMap);
     }

@@ -349,11 +349,11 @@ private:
     void checkTransfers(const commitmanager::SnapshotDescriptor& snapshot);
 
     void transferSchema(ClientHandle& client);
-    void transferKeys(crossbow::string tableName, commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
+    void transferKeys(crossbow::string tableName, const Transfer& transfer, ClientHandle& client);
 
     void transferOwnership(commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
 
-    void performTransfer(Transfer& transfer);
+    void performTransfer(const Transfer& transfer);
 
     void requestTransfer(   const crossbow::string& host, 
                             commitmanager::Hash rangeStart, 

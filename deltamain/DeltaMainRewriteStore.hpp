@@ -64,6 +64,12 @@ struct DeltaMainRewriteStore : crossbow::non_copyable, crossbow::non_movable {
     {
     }
 
+    bool createTable(const uint64_t tableId,
+                     const crossbow::string &name,
+                     const Schema& schema) {
+        return tableManager.createTable(tableId, name, schema, tableManager.config().hashMapCapacity);
+    }
+
     bool createTable(const crossbow::string &name,
                      const Schema& schema,
                      uint64_t& idx)

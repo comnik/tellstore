@@ -160,6 +160,32 @@ public:
         return true;
     }
 
+    template <typename... Args>
+    bool createTable(const uint64_t tableId,
+                     const crossbow::string& name,
+                     const Schema& schema,
+                     Args&&... args) {
+        if (schema.type() == TableType::UNKNOWN) {
+            return false;
+        }
+
+        crossbow::allocator __;
+        typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
+        {
+            auto res = mNames.insert(std::make_pair(name, tableId));
+            if (!res.second) {
+                return false;
+            }
+        }
+
+        auto ptr = crossbow::allocator::construct<Table>(mPageManager, name, schema, tableId, std::forward<Args>(args)...);
+        LOG_ASSERT(ptr, "Unable to allocate table");
+        __attribute__((unused)) auto res = mTables.insert(std::make_pair(tableId, ptr));
+        LOG_ASSERT(res.second, "Insert with unique id failed");
+
+        return true;
+    }
+
     std::vector<const Table*> getTables() const {
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         std::vector<const Table*> result;

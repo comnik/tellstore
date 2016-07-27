@@ -766,9 +766,11 @@ void ServerManager::transferSchema(ClientHandle& client) {
 
     LOG_INFO("Creating %1% local tables...", tables.size());
     for (const auto& table : tables) {
-        LOG_INFO("\t%1%", table.tableName());
-        auto tableId = table.tableId();
-        auto succeeded = mStorage.createTable(table.tableName(), table.record().schema(), tableId);
+        LOG_INFO("\t %1% (%2%)", table.tableId(), table.tableName());
+        
+        auto succeeded = mStorage.createTable(table.tableId(),
+                                              table.tableName(), 
+                                              table.record().schema());
         if (!succeeded) {
             LOG_ERROR("\tCould not create table %1%", table.tableName());
         }            
@@ -789,16 +791,16 @@ void ServerManager::requestTransfer(const crossbow::string& host,
 /**
  * Describes a key transfer transaction.
  */
-void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
+void ServerManager::transferKeys(crossbow::string tableName, const Transfer& transfer, ClientHandle& client) {
     auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
 
     auto table = client.getTable(tableName)->get();
 
-    auto transferQuery = createKeyTransferQuery(table, rangeStart, rangeEnd); 
+    auto transferQuery = createKeyTransferQuery(table, transfer.start, transfer.end);
 
     auto scanIterator = client.transferKeys(
-        rangeStart,
-        rangeEnd,
+        transfer.start,
+        transfer.end,
         table,
         *clusterState->snapshot,
         *mScanMemory,
@@ -809,6 +811,9 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
         nullptr
     );
 
+    uint64_t localTableId = 0x0u;
+    auto localTable = mStorage.getTable(tableName, localTableId);
+
     size_t errorCount = 0x0u;
     size_t scanCount = 0x0u;
     while (scanIterator->hasNext()) {
@@ -818,10 +823,12 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
         std::tie(key, tuple, tupleLength) = scanIterator->next();
         ++scanCount;
 
-        LOG_INFO("\treceived tuple %1%", key);
-
-        auto tableId = table.tableId();
-        auto ec = mStorage.insert(tableId, key, tupleLength, tuple, *clusterState->snapshot);
+        if (localTableId == 13) {
+            Hash partToken = table.field<Hash>("__partition_token", tuple);
+            LOG_INFO("\t\t %1% @ %2% (%3%) (%4%)", key, clusterState->snapshot->version(), HashRing::writeHash(partToken), partToken <= transfer.end);
+        }
+        
+        auto ec = mStorage.insert(localTableId, key, tupleLength, tuple, *clusterState->snapshot);
         
         // @TODO Ignore errors due to write collisions, simply discard the incoming write
         if (ec != 0) {
@@ -840,7 +847,9 @@ void ServerManager::transferKeys(crossbow::string tableName, Hash rangeStart, Ha
 
     client.commit(*clusterState->snapshot);
 
-    LOG_INFO("[TID %1%] Received %2% tuples in total, %3% errors", clusterState->snapshot->version(), scanCount, errorCount);
+    if (scanCount > 0 || errorCount > 0) {
+        LOG_INFO("\t\t received %1% tuples in total, %2% errors", scanCount, errorCount);
+    }
 }
 
 /**
@@ -857,10 +866,10 @@ void ServerManager::transferOwnership(Hash rangeStart, Hash rangeEnd, ClientHand
 /**
  * Performs a key transfer.
  */
-void ServerManager::performTransfer(Transfer& transfer) {
+void ServerManager::performTransfer(const Transfer& transfer) {
     for (const auto& table : mStorage.getTables()) {
-        LOG_INFO("\t- on table %1%", table->tableName());
-        auto tx = std::bind(&ServerManager::transferKeys, this, table->tableName(), transfer.start, transfer.end, _1);
+        LOG_INFO("\t-> on table %1% (%2%)", table->tableId(), table->tableName());
+        auto tx = std::bind(&ServerManager::transferKeys, this, table->tableName(), transfer, _1);
         // mTxRunner->execute(tx);
         TransactionRunner::executeBlocking(mPeersManager, tx);
     }
