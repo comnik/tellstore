@@ -191,6 +191,21 @@ bool ScanIterator::hasNext() {
     return true;
 }
 
+std::tuple<uint64_t, uint64_t, uint64_t, const char*, size_t> TransferIterator::next() {
+    auto validFrom = *reinterpret_cast<const uint64_t*>(mChunkPos);
+    mChunkPos += sizeof(uint64_t);
+
+    auto validTo = *reinterpret_cast<const uint64_t*>(mChunkPos);
+    mChunkPos += sizeof(uint64_t);
+
+    uint64_t key;
+    const char* tuple;
+    size_t tupleLength;
+    std::tie(key, tuple, tupleLength) = ScanIterator::next();
+
+    return std::make_tuple(key, validFrom, validTo, tuple, tupleLength);
+}
+
 std::tuple<uint64_t, const char*, size_t> ScanIterator::next() {
     if (!hasNext()) {
         throw std::out_of_range("Can not iterate past the last element");

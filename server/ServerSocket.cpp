@@ -798,7 +798,7 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
 
     auto transferQuery = createKeyTransferQuery(table, transfer.start, transfer.end);
 
-    auto scanIterator = client.transferKeys(
+    auto transferIterator = client.transferKeys(
         transfer.start,
         transfer.end,
         table,
@@ -816,19 +816,21 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
 
     size_t errorCount = 0x0u;
     size_t scanCount = 0x0u;
-    while (scanIterator->hasNext()) {
+    while (transferIterator->hasNext()) {
         uint64_t key;
+        uint64_t validFrom;
+        uint64_t validTo;
         const char* tuple;
         size_t tupleLength;
-        std::tie(key, tuple, tupleLength) = scanIterator->next();
+        std::tie(key, validFrom, validTo, tuple, tupleLength) = transferIterator->next();
         ++scanCount;
 
         if (localTableId == 13) {
-            Hash partToken = table.field<Hash>("__partition_token", tuple);
-            LOG_INFO("\t\t %1% @ %2% (%3%) (%4%)", key, clusterState->snapshot->version(), HashRing::writeHash(partToken), partToken <= transfer.end);
+            LOG_INFO("\t\t tuple %1% @ %2% %3%", key, validFrom, validTo);
         }
         
-        auto snapshot = client.createNonTransactionalSnapshot(0);
+        commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
+        auto snapshot = commitmanager::SnapshotDescriptor::create(0x0u, validFrom, validFrom+1, reinterpret_cast<const char*>(&descriptor));
         auto ec = mStorage.insert(localTableId, key, tupleLength, tuple, *snapshot);
         
         // @TODO Ignore errors due to write collisions, simply discard the incoming write
@@ -838,8 +840,8 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
         }
     }
 
-    if (scanIterator->error()) {
-        auto& ec = scanIterator->error();
+    if (transferIterator->error()) {
+        auto& ec = transferIterator->error();
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
     } else if (errorCount > 0) {
         LOG_ERROR("There were errors.");

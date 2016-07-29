@@ -168,16 +168,16 @@ public:
                                         uint32_t queryLength,
                                         const char* query );
 
-    std::shared_ptr<ScanIterator> transferKeys( commitmanager::Hash rangeStart,
-                                                commitmanager::Hash rangeEnd,
-                                                const Table& table, 
-                                                const commitmanager::SnapshotDescriptor& snapshot,
-                                                ScanMemoryManager& memoryManager, 
-                                                ScanQueryType queryType, 
-                                                uint32_t selectionLength, 
-                                                const char* selection,
-                                                uint32_t queryLength, 
-                                                const char* query );
+    std::shared_ptr<TransferIterator> transferKeys( commitmanager::Hash rangeStart,
+                                                    commitmanager::Hash rangeEnd,
+                                                    const Table& table, 
+                                                    const commitmanager::SnapshotDescriptor& snapshot,
+                                                    ScanMemoryManager& memoryManager, 
+                                                    ScanQueryType queryType, 
+                                                    uint32_t selectionLength, 
+                                                    const char* selection,
+                                                    uint32_t queryLength, 
+                                                    const char* query );
 
     std::shared_ptr<ModificationResponse> requestTransfer( const crossbow::string& host,
                                                            commitmanager::Hash rangeStart,
@@ -271,18 +271,18 @@ public:
         return mTellStoreSocket[host]->requestTransfer(fiber, rangeStart, rangeEnd, version);
     }
 
-    std::shared_ptr<ScanIterator> transferKeys( crossbow::infinio::Fiber& fiber,
-                                                commitmanager::Hash rangeStart,
-                                                commitmanager::Hash rangeEnd,
-                                                uint64_t tableId,
-                                                const commitmanager::SnapshotDescriptor& snapshot,
-                                                Record record, 
-                                                ScanMemoryManager& memoryManager,
-                                                ScanQueryType queryType, 
-                                                uint32_t selectionLength, 
-                                                const char* selection, 
-                                                uint32_t queryLength,
-                                                const char* query );
+    std::shared_ptr<TransferIterator> transferKeys( crossbow::infinio::Fiber& fiber,
+                                                    commitmanager::Hash rangeStart,
+                                                    commitmanager::Hash rangeEnd,
+                                                    uint64_t tableId,
+                                                    const commitmanager::SnapshotDescriptor& snapshot,
+                                                    Record record, 
+                                                    ScanMemoryManager& memoryManager,
+                                                    ScanQueryType queryType, 
+                                                    uint32_t selectionLength, 
+                                                    const char* selection, 
+                                                    uint32_t queryLength,
+                                                    const char* query );
 
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service,

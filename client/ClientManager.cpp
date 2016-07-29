@@ -216,16 +216,16 @@ std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table,
     );
 }
 
-std::shared_ptr<ScanIterator> ClientHandle::transferKeys(commitmanager::Hash rangeStart,
-                                                         commitmanager::Hash rangeEnd,
-                                                         const Table& table,
-                                                         const commitmanager::SnapshotDescriptor& snapshot,
-                                                         ScanMemoryManager& memoryManager,
-                                                         ScanQueryType queryType, 
-                                                         uint32_t selectionLength, 
-                                                         const char* selection,
-                                                         uint32_t queryLength, 
-                                                         const char* query) {
+std::shared_ptr<TransferIterator> ClientHandle::transferKeys(commitmanager::Hash rangeStart,
+                                                             commitmanager::Hash rangeEnd,
+                                                             const Table& table,
+                                                             const commitmanager::SnapshotDescriptor& snapshot,
+                                                             ScanMemoryManager& memoryManager,
+                                                             ScanQueryType queryType, 
+                                                             uint32_t selectionLength, 
+                                                             const char* selection,
+                                                             uint32_t queryLength, 
+                                                             const char* query) {
     return mProcessor.transferKeys(
         mFiber,
         rangeStart,
@@ -433,21 +433,21 @@ std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber
     return iterator;
 }
 
-std::shared_ptr<ScanIterator> BaseClientProcessor::transferKeys(crossbow::infinio::Fiber& fiber, 
-                                                                commitmanager::Hash rangeStart,
-                                                                commitmanager::Hash rangeEnd,
-                                                                uint64_t tableId,
-                                                                const commitmanager::SnapshotDescriptor& snapshot, 
-                                                                Record record, 
-                                                                ScanMemoryManager& memoryManager,
-                                                                ScanQueryType queryType, 
-                                                                uint32_t selectionLength, 
-                                                                const char* selection, 
-                                                                uint32_t queryLength,
-                                                                const char* query) {
+std::shared_ptr<TransferIterator> BaseClientProcessor::transferKeys(crossbow::infinio::Fiber& fiber, 
+                                                                    commitmanager::Hash rangeStart,
+                                                                    commitmanager::Hash rangeEnd,
+                                                                    uint64_t tableId,
+                                                                    const commitmanager::SnapshotDescriptor& snapshot, 
+                                                                    Record record, 
+                                                                    ScanMemoryManager& memoryManager,
+                                                                    ScanQueryType queryType, 
+                                                                    uint32_t selectionLength, 
+                                                                    const char* selection, 
+                                                                    uint32_t queryLength,
+                                                                    const char* query) {
     auto scanId = ++mScanId;
 
-    auto iterator = std::make_shared<ScanIterator>(fiber, std::move(record), mTellStoreSocket.size());
+    auto iterator = std::make_shared<TransferIterator>(fiber, std::move(record), mTellStoreSocket.size());
     for (auto& socketIt : mTellStoreSocket) {
         auto memory = memoryManager.acquire();
         if (!memory.valid()) {

@@ -306,6 +306,7 @@ public:
 private:
     friend class BaseClientProcessor;
     friend class ScanResponse;
+    friend class TransferIterator;
 
     void addScanResponse(std::shared_ptr<ScanResponse> response) {
         mScans.emplace_back(std::move(response));
@@ -334,6 +335,21 @@ private:
     const char* mChunkPos;
 
     const char* mChunkEnd;
+};
+
+/**
+ * @brief Extends ScanIterator to return full tuple information
+ * as used during a key transfer.
+ */
+class TransferIterator : public ScanIterator {
+public:
+    TransferIterator(crossbow::infinio::Fiber& fiber, Record record, size_t shardSize) 
+            : ScanIterator(fiber, record, shardSize) {};
+
+    /**
+     * @brief Returns a tuple (key, validFrom, validTo, data, length)
+     */
+    std::tuple<uint64_t, uint64_t, uint64_t, const char*, size_t> next();
 };
 
 /**
