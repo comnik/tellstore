@@ -362,8 +362,11 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert( crossbow::infinio::F
     return response;
 }
 
-std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
+std::shared_ptr<ModificationResponse> ClientSocket::update( crossbow::infinio::Fiber& fiber, 
+                                                            uint64_t tableId,
+                                                            uint64_t key, 
+                                                            const commitmanager::SnapshotDescriptor& snapshot, 
+                                                            AbstractTuple& tuple) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = tuple.size();

@@ -148,7 +148,7 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table,
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, 
                                                            uint64_t key, 
                                                            uint64_t version, 
-                                                           const AbstractTuple& tuple) {
+                                                           AbstractTuple& tuple) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
@@ -164,7 +164,7 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, u
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, 
                                                            uint64_t key, 
                                                            const commitmanager::SnapshotDescriptor& snapshot, 
-                                                           const AbstractTuple& tuple) {
+                                                           AbstractTuple& tuple) {
     checkTableType(table, TableType::TRANSACTIONAL);
     return mProcessor.update(mFiber, table.tableId(), key, snapshot, tuple);
 }

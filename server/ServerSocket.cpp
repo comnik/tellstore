@@ -830,7 +830,7 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
         }
         
         commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
-        auto snapshot = commitmanager::SnapshotDescriptor::create(0x0u, validFrom, validFrom+1, reinterpret_cast<const char*>(&descriptor));
+        auto snapshot = commitmanager::SnapshotDescriptor::create(0x0u, validFrom-1, validFrom, reinterpret_cast<const char*>(&descriptor));
         auto ec = mStorage.insert(localTableId, key, tupleLength, tuple, *snapshot);
         
         // @TODO Ignore errors due to write collisions, simply discard the incoming write

@@ -388,7 +388,7 @@ public:
                                                     uint64_t tableId,
                                                     uint64_t key,
                                                     const commitmanager::SnapshotDescriptor& snapshot,
-                                                    const AbstractTuple& tuple );
+                                                    AbstractTuple& tuple );
 
     std::shared_ptr<ModificationResponse> remove(   crossbow::infinio::Fiber& fiber,
                                                     uint64_t tableId,
