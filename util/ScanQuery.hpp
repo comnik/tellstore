@@ -286,7 +286,7 @@ private:
  */
 class ScanQueryProcessor : crossbow::non_copyable {
 public:
-    static constexpr size_t TUPLE_OVERHEAD = sizeof(uint64_t);
+    static constexpr size_t TUPLE_OVERHEAD = 3*sizeof(uint64_t);
 
     ScanQueryProcessor(ScanQuery* data)
             : mData(data),
@@ -360,9 +360,16 @@ void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t val
     }
 
     if (mData->queryType() == ScanQueryType::AGGREGATION) {
-        fun(mBuffer + 8);
+        fun(mBuffer + TUPLE_OVERHEAD);
     } else {
         ensureBufferSpace(length + TUPLE_OVERHEAD);
+
+        // Write version
+        if (key == 1425) {
+          LOG_INFO("Snapshot: %1% %2%", snapshot->baseVersion(), snapshot->version());
+        }
+        mBufferWriter.write<uint64_t>(validFrom);
+        mBufferWriter.write<uint64_t>(validTo);
 
         // Write key
         mBufferWriter.write<uint64_t>(key);

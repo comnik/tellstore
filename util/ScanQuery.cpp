@@ -155,7 +155,13 @@ ScanQueryProcessor& ScanQueryProcessor::operator=(ScanQueryProcessor&& other) {
 void ScanQueryProcessor::initAggregationRecord() {
     ensureBufferSpace(mData->minimumLength());
 
+    // Dummy version
     mBufferWriter.write<uint64_t>(0u);
+    mBufferWriter.write<uint64_t>(0u);
+    
+    // Dummy key
+    mBufferWriter.write<uint64_t>(0u);
+    
     auto tupleData = mBufferWriter.data();
     mBufferWriter.set(0, mData->minimumLength() - TUPLE_OVERHEAD);
 
