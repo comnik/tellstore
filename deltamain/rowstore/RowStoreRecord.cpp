@@ -113,6 +113,8 @@ int RowStoreRecord::canUpdate(uint64_t highestVersion, const commitmanager::Snap
         return (type == RecordType::DELETE ? 0 : error::invalid_write);
     }
     if (!snapshot.inReadSet(versions[i])) {
+        LOG_INFO("Highest version %1%", highestVersion);
+        LOG_ERROR("Not in snapshot: (%1%, %2%) in %3%", snapshot.baseVersion(), snapshot.version(), versions[i]);
         return error::not_in_snapshot;
     }
 
@@ -148,6 +150,7 @@ int RowStoreRecord::canRevert(uint64_t highestVersion, const commitmanager::Snap
                 return 0;
             }
             if (versions[i] == snapshot.version()) {
+                LOG_ERROR("Not in snapshot 14");
                 return error::not_in_snapshot;
             }
         }

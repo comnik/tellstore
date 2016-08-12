@@ -97,6 +97,7 @@ int Table<Context>::insert(uint64_t key, size_t size, const char* data,
     if (!mInsertTable.insert(key, insertEntry, insertList)) {
         insertEntry->newest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
         mInsertLog.seal(logEntry);
+        LOG_ERROR("Not in snapshot 5");
         return error::not_in_snapshot;
     }
 
@@ -306,6 +307,7 @@ bool Table<Context>::internalUpdate(void* ptr, size_t size, const char* data,
 
     // Check if the entry can be overwritten
     if ((ec = canUpdate(record, snapshot, expectedType)) != 0) {
+        LOG_ERROR("Can _not_ update");
         return true;
     }
 
@@ -332,6 +334,7 @@ bool Table<Context>::internalUpdate(void* ptr, size_t size, const char* data,
         }
 
         // Another update happened in the meantime
+        LOG_ERROR("internal update Not in snapshot");
         ec  = error::not_in_snapshot;
         return true;
     }
@@ -348,6 +351,7 @@ int Table<Context>::canUpdate(const Rec& record, const commitmanager::SnapshotDe
     UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
     if (!updateIter.done()) {
         if (!snapshot.inReadSet(updateIter->version)) {
+            LOG_ERROR("can Update internal update Not in snapshot");
             return error::not_in_snapshot;
         }
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
@@ -389,6 +393,7 @@ bool Table<Context>::internalRevert(void* ptr, const commitmanager::SnapshotDesc
                     return true;
                 }
                 if (updateIter->version == snapshot.version()) {
+                    LOG_ERROR("Not in snapshot 3");
                     ec = error::not_in_snapshot;
                     return true;
                 }
@@ -426,6 +431,7 @@ bool Table<Context>::internalRevert(void* ptr, const commitmanager::SnapshotDesc
         }
 
         // Another update happened in the meantime
+        LOG_ERROR("Not in snapshot 4");
         ec = error::not_in_snapshot;
         return true;
     }
