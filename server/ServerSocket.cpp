@@ -766,7 +766,7 @@ void ServerManager::transferSchema(ClientHandle& client) {
 
     LOG_INFO("Creating %1% local tables...", tables.size());
     for (const auto& table : tables) {
-        LOG_INFO("\t %1% (%2%)", table.tableId(), table.tableName());
+        LOG_INFO("\t %1% (%2%, %3%)", table.tableId(), table.tableName(), table.tableType() == TableType::NON_TRANSACTIONAL);
         
         auto succeeded = mStorage.createTable(table.tableId(),
                                               table.tableName(), 

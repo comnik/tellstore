@@ -140,9 +140,11 @@ int InsertRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Snaps
         bool isNewest) const {
     // Check if the element was already overwritten by an element in the update log
     if (mEntry->version >= highestVersion) {
+        LOG_ERROR("Not in snapshot 11");
         return (isNewest ? error::not_found : error::not_in_snapshot);
     }
     if (!snapshot.inReadSet(mEntry->version)) {
+        LOG_ERROR("Not in snapshot 12");
         return error::not_in_snapshot;
     }
 

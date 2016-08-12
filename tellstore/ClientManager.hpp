@@ -225,13 +225,22 @@ public:
         return mTellStoreSocket.begin()->second->getTable(fiber, name);
     }
 
-    std::shared_ptr<ClusterResponse<GetResponse>> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot) {
-        return withReadSharding(fiber, tableId, key, [&](store::ClientSocket& node) { return node.get(fiber, tableId, key, snapshot); });
+    std::shared_ptr<ClusterResponse<GetResponse>> get(  crossbow::infinio::Fiber& fiber, 
+                                                        uint64_t tableId, 
+                                                        uint64_t key,
+                                                        const commitmanager::SnapshotDescriptor& snapshot ) {
+
+        LOG_INFO("GET (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+
+        return withReadSharding(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) { 
+            return node.get(fiber, tableId, key, snapshot); 
+        });
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, AbstractTuple& tuple) {
+
+        LOG_INFO("INSERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
         tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
         return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
@@ -242,18 +251,25 @@ public:
                                                  uint64_t key,
                                                  const commitmanager::SnapshotDescriptor& snapshot, 
                                                  AbstractTuple& tuple) {
-
+        LOG_INFO("UPDATE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        
         tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
         return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
     }
 
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
+
+        LOG_INFO("REMOVE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        
         return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
+
+        LOG_INFO("REVERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+
         return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
     }
 
@@ -310,6 +326,8 @@ private:
         auto partition = mNodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
+        LOG_INFO("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
+
         return mTellStoreSocket[partition->owner].get();
     }
 
@@ -324,11 +342,14 @@ private:
     std::shared_ptr<ClusterResponse<GetResponse>> withReadSharding(crossbow::infinio::Fiber& fiber, 
                                                                    uint64_t tableId, 
                                                                    uint64_t key, 
+                                                                   const commitmanager::SnapshotDescriptor& snapshot,
                                                                    std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn) {
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         
         auto partition = mNodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+
+        LOG_INFO("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
 
         if (partition->isBootstrapping) {
             // first attempt on the bootstrapping node
@@ -339,7 +360,7 @@ private:
             auto prevNodeSocket = mTellStoreSocket[partition->previousOwner].get();
             auto retryResp = reqFn(*prevNodeSocket);
 
-            LOG_DEBUG("Attempted read on nodes %1% and %2%", partition->owner, partition->previousOwner);
+            LOG_INFO("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, mNodeRing.get());
 
             return std::make_shared<ClusterResponse<GetResponse>>(resp, retryResp);
         } else {

@@ -263,6 +263,7 @@ bool Table<Context>::internalGet(const void* ptr, const commitmanager::SnapshotD
         // Check if the entry marks a deletion: Return element not found
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
         if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
+            LOG_ERROR("Not in snapshot. %1%", isNewest);
             ec = (isNewest ? error::not_found : error::not_in_snapshot);
             return true;
         }
