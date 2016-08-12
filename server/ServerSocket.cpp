@@ -19,6 +19,7 @@
  *     Thomas Etter <etterth@gmail.com>
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
+ *     Nikolas Göbel <ngoebel@inf.ethz.ch>
  */
 
 #include "ServerSocket.hpp"
@@ -391,6 +392,7 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
+    // Theser are not used yet
     auto rangeStart = request.read<commitmanager::Hash>();
     auto rangeEnd = request.read<commitmanager::Hash>();
     auto version = request.read<uint64_t>();
@@ -751,10 +753,6 @@ std::unique_ptr<char[]> createKeyTransferQuery(Table& table, Hash rangeStart, Ha
     return selection;
 }
 
-/**
- * Describes a schema transfer transaction to initialize
- * the local node from its peers.
- */
 void ServerManager::transferSchema(ClientHandle& client) {
     LOG_INFO("Fetching schema...");
     auto tablesFuture = client.getTables();
@@ -768,6 +766,9 @@ void ServerManager::transferSchema(ClientHandle& client) {
     for (const auto& table : tables) {
         LOG_INFO("\t %1% (%2%, %3%)", table.tableId(), table.tableName(), table.tableType() == TableType::NON_TRANSACTIONAL);
         
+        // It is important to create the local tables with id's
+        // matching their remotes counterpart, as client's assume
+        // that table id's match across the cluster.
         auto succeeded = mStorage.createTable(table.tableId(),
                                               table.tableName(), 
                                               table.record().schema());
@@ -777,9 +778,6 @@ void ServerManager::transferSchema(ClientHandle& client) {
     }
 }
 
-/**
- * Describes a transaction to request a key transfer from a peer.
- */
 void ServerManager::requestTransfer(const crossbow::string& host, 
                                     Hash rangeStart, 
                                     Hash rangeEnd, 
@@ -788,9 +786,6 @@ void ServerManager::requestTransfer(const crossbow::string& host,
     client.requestTransfer(host, rangeStart, rangeEnd, version);
 }
 
-/**
- * Describes a key transfer transaction.
- */
 void ServerManager::transferKeys(crossbow::string tableName, const Transfer& transfer, ClientHandle& client) {
     auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
 
@@ -824,16 +819,17 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
         size_t tupleLength;
         std::tie(key, validFrom, validTo, tuple, tupleLength) = transferIterator->next();
         ++scanCount;
-
-        if (localTableId == 13) {
-            LOG_INFO("\t\t tuple %1% @ %2% %3%", key, validFrom, validTo);
-        }
         
+        // @TODO As discussed in the thesis, this is kind of a hack.
+        // We construct a SnapshotDescriptor that matches the incoming tuple's versioning information.
+        // Will have to be extended to copy the tuple's entire active versioning history.
+
         commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
         auto snapshot = commitmanager::SnapshotDescriptor::create(0x0u, validFrom-1, validFrom, reinterpret_cast<const char*>(&descriptor));
         auto ec = mStorage.insert(localTableId, key, tupleLength, tuple, *snapshot);
         
         // @TODO Ignore errors due to write collisions, simply discard the incoming write
+        // This will be reconsidered anyways when implementing a proper merge.
         if (ec != 0) {
             LOG_ERROR("\tInsertion failed with error code %1%", ec);
             ++errorCount;
@@ -855,9 +851,6 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
     }
 }
 
-/**
- * Acknowledges the successful transfer of a partition.
- */
 void ServerManager::transferOwnership(Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
     auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
 
@@ -866,14 +859,15 @@ void ServerManager::transferOwnership(Hash rangeStart, Hash rangeEnd, ClientHand
     client.commit(*clusterState->snapshot);
 }
 
-/**
- * Performs a key transfer.
- */
 void ServerManager::performTransfer(const Transfer& transfer) {
     for (const auto& table : mStorage.getTables()) {
         LOG_INFO("\t-> on table %1% (%2%)", table->tableId(), table->tableName());
         auto tx = std::bind(&ServerManager::transferKeys, this, table->tableName(), transfer, _1);
+        
+        // @TODO: This should use the MultiTransactionRunner
+        // Currently this causes some problems with the allocated scan memory.
         // mTxRunner->execute(tx);
+        
         TransactionRunner::executeBlocking(mPeersManager, tx);
     }
 

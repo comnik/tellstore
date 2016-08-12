@@ -19,6 +19,7 @@
  *     Thomas Etter <etterth@gmail.com>
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
+ *     Nikolas Göbel <ngoebel@inf.ethz.ch>
  */
 #pragma once
 
@@ -50,11 +51,17 @@ namespace store {
 
 class ServerManager;
 
-
+/**
+ * Holds information about a registered key transfer.
+ */
 struct Transfer {
     commitmanager::Hash start;
     commitmanager::Hash end;
+    
+    // Oldest transaction id that is not aware of the transfer.
+    // Storage node will wait until lowestActiveVersion > atVersion
     uint64_t atVersion;
+    
     bool started;
 
     Transfer()
@@ -249,6 +256,8 @@ private:
      * - x bytes: Snapshot descriptor
      */
     void handleScan(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
+    
+    /** Same as handleScan, but will handle some key-transfer related specialties. */
     void handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
@@ -257,6 +266,7 @@ private:
      */
     void handleScanProgress(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
+    /** Allows other storage nodes to register key transfers with this node when they leave. */ 
     void handleRequestTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
@@ -314,7 +324,7 @@ private:
     /// The Connection has the ownership because we can only free this after all RDMA writes have been processed
     std::unordered_map<uint16_t, std::unique_ptr<ServerScanQuery>> mScans;
 
-    /// Map from Scan ID to the partition being transferred
+    /// Map of registered key transfers
     std::vector<std::unique_ptr<Transfer>> mTransfers;
 };
 
@@ -345,26 +355,41 @@ private:
         return mScanBufferManager;
     }
 
+    /** Checks whether the last transaction not aware of the given transfer has completed. */
     void checkTransfer(Transfer& transfer, const commitmanager::SnapshotDescriptor& snapshot);
+    
+    /** Runs checkTransfer on all registered transfers */
     void checkTransfers(const commitmanager::SnapshotDescriptor& snapshot);
 
+    /**
+     * Describes a schema transfer transaction to initialize
+     * the local node from its peers.
+     */
     void transferSchema(ClientHandle& client);
+
+    /** Describes a key transfer transaction. */
     void transferKeys(crossbow::string tableName, const Transfer& transfer, ClientHandle& client);
 
+    /** Describes the acknowledgement of a successful transfer of a partition. */
     void transferOwnership(commitmanager::Hash rangeStart, commitmanager::Hash rangeEnd, ClientHandle& client);
 
+    /** Initiates a registered key transfer. */
     void performTransfer(const Transfer& transfer);
 
+    /** Describes a transaction to request a key transfer from a peer. */
     void requestTransfer(   const crossbow::string& host, 
                             commitmanager::Hash rangeStart, 
                             commitmanager::Hash rangeEnd, 
                             uint64_t version, 
                             ClientHandle& client );
 
+    // The local node's id
     crossbow::string mToken;
 
+    // Configuration used to contact peers (for key transfers)
     ClientConfig mPeersConfig;
 
+    // ClientManager used to contact peers (for key transfers)
     ClientManager<void> mPeersManager;
 
     std::unique_ptr<MultiTransactionRunner<void>> mTxRunner;
