@@ -19,34 +19,48 @@
  *     Thomas Etter <etterth@gmail.com>
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
+ *     Nikolas Göbel <ngoebel@student.ethz.ch>
  */
 
 #include <crossbow/logger.hpp>
 #include <crossbow/string.hpp>
+#include <crossbow/program_options.hpp>
 
 #include <commitmanager/HashRing.hpp>
 
 #include <tellstore/ClientManager.hpp>
 
+#include <iostream>
+#include <fstream>
+#include <chrono>
+
 using namespace tell::commitmanager;
 using namespace tell::store;
 
 
-void dumpRanges(const HashRing& nodeRing) {
+/**
+ * Prints out the current set of storage nodes and
+ * the partitions they are responsible for.
+ */
+void dumpRanges (const HashRing& nodeRing) {
     LOG_INFO("== Ranges ====================");
     for (const auto& nodeIt : nodeRing.getRing()) {
         LOG_INFO("Node %1% ranges:", nodeIt.second.owner);
         for (const auto& range : nodeRing.getRanges(nodeIt.second.owner)) {
-            LOG_INFO("\t[%1%, %2%]", HashRing::writeHash(range.start), HashRing::writeHash(range.end));
+            LOG_INFO("[%1%, %2%]", HashRing::writeHash(range.start), HashRing::writeHash(range.end));
         }
     }
 }
 
-int main(int argc, const char** argv) {
-    crossbow::string logLevel("INFO");
-    crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
-    HashRing nodeRing(1);
+/**
+ * Tests wether partitions are correctly
+ * adapted whenever nodes join or leave.
+ */
+void testPartitioning (uint32_t numVnodes) {
+    LOG_INFO("::Partitioning Test");
+
+    HashRing nodeRing(numVnodes);
 
     Hash node1Token = nodeRing.insertNode("0.0.0.0:7243");
     dumpRanges(nodeRing);
@@ -69,6 +83,117 @@ int main(int argc, const char** argv) {
     for (const auto& range : ranges) {
         LOG_INFO("\t[%1%, %2%] -> %3%", HashRing::writeHash(range.start), HashRing::writeHash(range.end), range.owner);
     }
+}
 
+
+void testDistribution (uint64_t numKeys, uint32_t numNodes, uint32_t numVnodes) {
+    LOG_INFO("::Distribution Test");
+
+    HashRing ring(numVnodes);
+
+    std::unordered_map<crossbow::string, uint32_t> nodeIds;
+    nodeIds.reserve(numNodes);
+
+    for (uint32_t i=1; i <= numNodes; ++i) {
+        crossbow::string host = "node" + crossbow::to_string(i) + ".example.com";
+        
+        ring.insertNode(host);
+        nodeIds[host] = i;
+    }
+
+    auto moduloShard  = [numNodes] (uint64_t key) { return (key % numNodes) + 1; }; 
+    auto md5Shard     = [&ring, &nodeIds] (uint64_t key) { return nodeIds[ring.getNode(1, key)->owner]; };
+    auto murmur3Shard = [&ring, &nodeIds] (uint64_t key) { return nodeIds[ring.getNode(1, key)->owner]; };
+
+    std::ofstream moduloResults("results/modulo-" + std::to_string(numVnodes) + "vnodes.csv");
+    std::ofstream md5Results("results/md5-" + std::to_string(numVnodes) + "vnodes.csv");
+    std::ofstream murmur3Results("results/murmur3-" + std::to_string(numVnodes) + "vnodes.csv");
+
+    for (uint64_t i=0; i < numKeys; ++i) {
+        moduloResults   << moduloShard(i)   << std::endl;
+        md5Results      << md5Shard(i)      << std::endl;
+        murmur3Results  << murmur3Shard(i)  << std::endl;
+    }
+
+    moduloResults.close();
+    md5Results.close();
+    murmur3Results.close();
+}
+
+
+std::chrono::milliseconds baselinePerformance (uint64_t numKeys, uint32_t numNodes) {
+    auto startTime = std::chrono::steady_clock::now();
+
+    for (uint64_t i=0; i < numKeys; ++i) {
+        auto partition = i % numNodes;
+    }
+
+    auto endTime = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+}
+
+
+std::chrono::milliseconds testPerformance (uint64_t numKeys, uint32_t numVnodes) {
+    HashRing ring(numVnodes);
+
+    auto startTime = std::chrono::steady_clock::now();
+
+    for (uint64_t i=0; i < numKeys; ++i) {
+        auto partition = ring.getNode(1, i);
+    }
+
+    auto endTime = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+}
+
+
+int main (int argc, const char** argv) {
+    bool help = false;
+    crossbow::string logLevel("INFO");
+    uint64_t numKeys = 1000000;
+    uint32_t numNodes = 10;
+    uint32_t numVnodes = 1;
+
+    auto opts = crossbow::program_options::create_options(argv[0],
+            crossbow::program_options::value<'h'>("help", &help),
+            crossbow::program_options::value<'l'>("log-level", &logLevel),
+            crossbow::program_options::value<'k'>("keys", &numKeys),
+            crossbow::program_options::value<'n'>("nodes", &numNodes),
+            crossbow::program_options::value<'v'>("vnodes", &numVnodes));
+
+    try {
+        crossbow::program_options::parse(opts, argc, argv);
+    } catch (crossbow::program_options::argument_not_found e) {
+        std::cerr << e.what() << std::endl << std::endl;
+        crossbow::program_options::print_help(std::cout, opts);
+        return 1;
+    }
+
+    if (help) {
+        crossbow::program_options::print_help(std::cout, opts);
+        return 0;
+    }
+
+    crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
+
+    LOG_INFO("Starting Consistent Hashing Test");
+    LOG_INFO("--- Number of keys: %1%", numKeys);
+    LOG_INFO("--- Number of nodes: %1%", numNodes);
+    LOG_INFO("--- Number of virtual nodes: %1%", numVnodes);
+
+    // testPartitioning(numVnodes);
+    // testDistribution(numKeys, numNodes, numVnodes);
+
+    auto baselineDuration = baselinePerformance(numKeys, numNodes);
+    LOG_INFO("Baseline duration: %1%ms", baselineDuration.count());
+
+    std::ofstream perfResults("perf/murmur3.csv");
+    for (uint32_t vnodes = 1; vnodes <= 200; vnodes += 10) {
+        auto duration = testPerformance(numKeys, vnodes);
+        // LOG_INFO("Partitioning %1% keys with %2% took %3%ms", numKeys, numVnodes, duration.count());
+        perfResults << vnodes << "," << duration.count() << std::endl;
+    }
+    perfResults.close();
+    
     return 0;
 }

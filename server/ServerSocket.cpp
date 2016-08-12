@@ -553,7 +553,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
     // We registered successfully. This means, the commit manager should have 
     // responded with key ranges we are now responsible for. We have to
     // request these ranges from their current owners and then notify the commit manager that we now control them.
-
+    
     std::set<crossbow::string> owners;
     for (auto range : clusterMeta->ranges) {
         if (range.owner == config.nodeToken) {
