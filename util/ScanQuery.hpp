@@ -365,9 +365,6 @@ void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t val
         ensureBufferSpace(length + TUPLE_OVERHEAD);
 
         // Write version
-        if (key == 1425) {
-          LOG_INFO("Snapshot: %1% %2%", snapshot->baseVersion(), snapshot->version());
-        }
         mBufferWriter.write<uint64_t>(validFrom);
         mBufferWriter.write<uint64_t>(validTo);
 
