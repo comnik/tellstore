@@ -230,7 +230,7 @@ public:
                                                         uint64_t key,
                                                         const commitmanager::SnapshotDescriptor& snapshot ) {
 
-        LOG_INFO("GET (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        LOG_TRACE("GET (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
 
         // Reads have to be wrapped into a special future, that handles read replication
         // if the partition is currently being transferred.
@@ -242,7 +242,7 @@ public:
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, AbstractTuple& tuple) {
 
-        LOG_INFO("INSERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        LOG_TRACE("INSERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
         tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
         return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
@@ -253,7 +253,7 @@ public:
                                                  uint64_t key,
                                                  const commitmanager::SnapshotDescriptor& snapshot, 
                                                  AbstractTuple& tuple) {
-        LOG_INFO("UPDATE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        LOG_TRACE("UPDATE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
         tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
         return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
@@ -262,7 +262,7 @@ public:
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
 
-        LOG_INFO("REMOVE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        LOG_TRACE("REMOVE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
         return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
     }
@@ -270,7 +270,7 @@ public:
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
 
-        LOG_INFO("REVERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+        LOG_TRACE("REVERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
 
         return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
     }
