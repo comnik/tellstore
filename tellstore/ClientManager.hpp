@@ -232,6 +232,8 @@ public:
 
         LOG_INFO("GET (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
 
+        // Reads have to be wrapped into a special future, that handles read replication
+        // if the partition is currently being transferred.
         return withReadSharding(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) { 
             return node.get(fiber, tableId, key, snapshot); 
         });
@@ -320,13 +322,13 @@ protected:
 
 private:
     /**
-     * @brief The socket associated with the shard for the given partition token
+     * Returns the socket associated with the node that owns the given partition token.
      */
     store::ClientSocket* shard(commitmanager::Hash partitionToken) {
         auto partition = mNodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        LOG_INFO("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
+        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
 
         return mTellStoreSocket[partition->owner].get();
     }
@@ -336,8 +338,8 @@ private:
     }
 
     /**
-     * @brief Performs a read request to a bootstrapping node and retries it automatically
-     * on the node that previously owned the key.
+     * Wraps a read request with a future that replicates read requests on a bootstrapping partition
+     * at the node that previously owned the key.
      */
     std::shared_ptr<ClusterResponse<GetResponse>> withReadSharding(crossbow::infinio::Fiber& fiber, 
                                                                    uint64_t tableId, 
@@ -349,7 +351,7 @@ private:
         auto partition = mNodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        LOG_INFO("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
+        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
 
         if (partition->isBootstrapping) {
             // first attempt on the bootstrapping node
@@ -360,7 +362,7 @@ private:
             auto prevNodeSocket = mTellStoreSocket[partition->previousOwner].get();
             auto retryResp = reqFn(*prevNodeSocket);
 
-            LOG_INFO("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, mNodeRing.get());
+            LOG_TRACE("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, mNodeRing.get());
 
             return std::make_shared<ClusterResponse<GetResponse>>(resp, retryResp);
         } else {
@@ -374,9 +376,13 @@ private:
 
     crossbow::infinio::InfinibandService& mService;
 
+    // Atomic flag indicating wether a thread is updating the local hash ring
     std::atomic<bool> mIsUpdating;
 
+    // The transaction id at which the local hash ring was last updated
     uint64_t mCachedDirectoryVersion;
+
+    // The local copy of the hash ring
     std::unique_ptr<HashRing_t> mNodeRing;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
@@ -456,9 +462,18 @@ public:
 
     void shutdown();
 
+    /** 
+     * Loads a client configuration and protects it from modification during transactions,
+     * when a more recent version of the clusters partitioning information is received from the commit-manager.
+     *
+     * This method should only be used by the tellstore server implementation.
+     */
     template <typename... Args>
     void lockConfig(ClientConfig& config, Args... contextArgs);
 
+    /**
+     * Reload the client configuration to connect to storage nodes that joined the cluster.
+     */
     template <typename... Args>
     void reloadConfig(const ClientConfig& config, Args... contextArgs);
 

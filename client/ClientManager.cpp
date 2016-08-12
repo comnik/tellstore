@@ -262,6 +262,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
       mProcessorNum(processorNum),
       mScanId(0u) {
 
+    // Load the configuration initially
     reloadConfig(config);
 }
 
@@ -271,6 +272,9 @@ void BaseClientProcessor::reloadConfig(const ClientConfig& config) {
     if (!mCommitManagerSocket.isConnected()) {
         mCommitManagerSocket.connect(config.commitManager);
     }
+
+    // Only connections to new hosts will be created,
+    // existing ones will be kept.
 
     for (auto& ep : config.getStores()) {
         auto search = mTellStoreSocket.find(ep.getToken());
