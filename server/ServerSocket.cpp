@@ -841,7 +841,7 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
     } else if (errorCount > 0) {
         LOG_ERROR("There were errors.");
-        std::exit(1);
+        // std::exit(1);
     }
 
     client.commit(*clusterState->snapshot);

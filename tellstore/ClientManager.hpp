@@ -218,10 +218,12 @@ public:
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
 
     std::shared_ptr<GetTablesResponse> getTables(crossbow::infinio::Fiber& fiber) {
+        LOG_ASSERT(!mTellStoreSocket.empty(), "No storages available");
         return mTellStoreSocket.begin()->second->getTables(fiber);
     }
 
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name) {
+        LOG_ASSERT(!mTellStoreSocket.empty(), "No storages available");
         return mTellStoreSocket.begin()->second->getTable(fiber, name);
     }
 

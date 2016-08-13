@@ -280,7 +280,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
 }
 
 void BaseClientProcessor::reloadConfig(const ClientConfig& config) {
-    LOG_DEBUG("Reloading processor config...");
+    LOG_DEBUG("[PROC %1%] Reloading processor config...", mProcessorNum);
 
     if (!mCommitManagerSocket.isConnected()) {
         mCommitManagerSocket.connect(config.commitManager);
@@ -304,6 +304,8 @@ void BaseClientProcessor::reloadConfig(const ClientConfig& config) {
             mTellStoreSocket[ep.getToken()] = std::move(socket);
         }
     }
+    
+    LOG_DEBUG("[PROC %1%] Connected to %2% hosts", mProcessorNum, mTellStoreSocket.size());
 }
 
 void BaseClientProcessor::shutdown() {
@@ -354,9 +356,10 @@ void BaseClientProcessor::transferOwnership(crossbow::infinio::Fiber& fiber,
 std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, 
                                                                         TransactionType type) {
     // TODO Return a transaction future?
+
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
     auto clusterState = startResponse->get();
-    
+
     if (clusterState->directoryVersion > mCachedDirectoryVersion && !mConfig.isLocked) {
         if (mIsUpdating.exchange(true)) {
             LOG_INFO("Someone is already updating the configuration.");
