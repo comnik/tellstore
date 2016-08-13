@@ -543,6 +543,7 @@ void ClientSocket::transferKeys(commitmanager::Hash rangeStart,
 }
 
 template class ClusterResponse<GetResponse>;
+template class ClusterResponse<ModificationResponse>;
 
 } // namespace store
 } // namespace tell

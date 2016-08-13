@@ -95,6 +95,29 @@ public:
             }            
         }
     }
+
+    /** Will only return a successful response if both requests succeeded */
+    std::shared_ptr<ResponseType> getQuorum() {
+        if (mRetryResponse == nullptr) {
+            // No retry set
+            return mResponse;
+        } else {
+            bool destSucceeded = mResponse->waitForResult();
+            bool srcSucceeded = mRetryResponse->waitForResult();
+
+            if (destSucceeded && srcSucceeded) {
+                return mResponse;                
+            } else if (!destSucceeded) {
+                auto& ec = mResponse->error();
+                LOG_INFO("Replicated write failed at new owner with %1% (%2%)", ec, ec.message());
+                return mResponse;
+            } else if (!srcSucceeded) {
+                auto& ec = mRetryResponse->error();
+                LOG_INFO("Replicated write failed at old owner with %1% (%2%)", ec, ec.message());
+                return mRetryResponse;
+            }
+        }
+    }
     
 private:
     std::shared_ptr<ResponseType> mResponse;
@@ -346,9 +369,7 @@ public:
     TransferIterator(crossbow::infinio::Fiber& fiber, Record record, size_t shardSize) 
             : ScanIterator(fiber, record, shardSize) {};
 
-    /**
-     * @brief Returns a tuple (key, validFrom, validTo, data, length)
-     */
+    /** Returns a tuple (key, validFrom, validTo, data, length) */
     std::tuple<uint64_t, uint64_t, uint64_t, const char*, size_t> next();
 };
 
@@ -435,6 +456,7 @@ public:
 };
 
 extern template class ClusterResponse<GetResponse>;
+extern template class ClusterResponse<ModificationResponse>;
 
 } // namespace store
 } // namespace tell

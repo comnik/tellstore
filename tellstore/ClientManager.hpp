@@ -232,47 +232,70 @@ public:
 
         LOG_TRACE("GET (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
 
-        // Reads have to be wrapped into a special future, that handles read replication
+        // Reads have to be wrapped into a future that handles read replication
         // if the partition is currently being transferred.
-        return withReadSharding(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) { 
+        return withReadReplication(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) { 
             return node.get(fiber, tableId, key, snapshot); 
         });
     }
 
-    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot, AbstractTuple& tuple) {
-
+    std::shared_ptr<ClusterResponse<ModificationResponse>> insert(  crossbow::infinio::Fiber& fiber, 
+                                                                    uint64_t tableId, 
+                                                                    uint64_t key,
+                                                                    const commitmanager::SnapshotDescriptor& snapshot, 
+                                                                    AbstractTuple& tuple ) {
         LOG_TRACE("INSERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
+        // Set the partition token
         tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
-        return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
-    }
-
-    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, 
-                                                 uint64_t tableId, 
-                                                 uint64_t key,
-                                                 const commitmanager::SnapshotDescriptor& snapshot, 
-                                                 AbstractTuple& tuple) {
-        LOG_TRACE("UPDATE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
-        tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
-        return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
+        // Inserts have to be wrapped into a future that handles write replication
+        // if the partition is currently being transferred.
+        return withWriteReplication(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) {
+            return node.insert(fiber, tableId, key, snapshot, tuple);
+        });
     }
 
-    std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot) {
+    std::shared_ptr<ClusterResponse<ModificationResponse>> update(  crossbow::infinio::Fiber& fiber, 
+                                                                    uint64_t tableId, 
+                                                                    uint64_t key,
+                                                                    const commitmanager::SnapshotDescriptor& snapshot, 
+                                                                    AbstractTuple& tuple ) {
+        
+        LOG_TRACE("UPDATE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
+     
+        // Set the partition token. This is required because the old tuple will be
+        // replaced, instead of merged.   
+        tuple.setPartitionToken(HashRing_t::getPartitionToken(tableId, key));
+        
+        // Like inserts, updates might have to be replicated
+        return withWriteReplication(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) {
+            return node.update(fiber, tableId, key, snapshot, tuple);
+        });
+    }
+
+    std::shared_ptr<ClusterResponse<ModificationResponse>> remove(  crossbow::infinio::Fiber& fiber, 
+                                                                    uint64_t tableId, 
+                                                                    uint64_t key,
+                                                                    const commitmanager::SnapshotDescriptor& snapshot ) {
 
         LOG_TRACE("REMOVE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
         
-        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
+        // Like inserts, removals might have to be replicated
+        return withWriteReplication(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) {
+            return node.remove(fiber, tableId, key, snapshot);
+        });
     }
 
-    std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+    std::shared_ptr<ClusterResponse<ModificationResponse>> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
 
         LOG_TRACE("REVERT (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
 
-        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
+        // Like inserts, reverts might have to be replicated
+        return withWriteReplication(fiber, tableId, key, snapshot, [&](store::ClientSocket& node) {
+            return node.revert(fiber, tableId, key, snapshot);
+        });
     }
 
     std::shared_ptr<ScanIterator> scan( crossbow::infinio::Fiber& fiber,
@@ -341,7 +364,7 @@ private:
      * Wraps a read request with a future that replicates read requests on a bootstrapping partition
      * at the node that previously owned the key.
      */
-    std::shared_ptr<ClusterResponse<GetResponse>> withReadSharding(crossbow::infinio::Fiber& fiber, 
+    std::shared_ptr<ClusterResponse<GetResponse>> withReadReplication(crossbow::infinio::Fiber& fiber, 
                                                                    uint64_t tableId, 
                                                                    uint64_t key, 
                                                                    const commitmanager::SnapshotDescriptor& snapshot,
@@ -369,6 +392,44 @@ private:
             // nothing special here, we just have to wrap the response
             auto nodeSocket = mTellStoreSocket[partition->owner].get();
             return std::make_shared<ClusterResponse<GetResponse>>(reqFn(*nodeSocket));
+        }
+    }
+
+    /**
+     * Wraps a write request with a future that replicates write requests on a bootstrapping partition
+     * at the node that previously owned the key and fails if either request fails.
+     */
+    std::shared_ptr<ClusterResponse<ModificationResponse>> withWriteReplication(crossbow::infinio::Fiber& fiber, 
+                                                                                uint64_t tableId, 
+                                                                                uint64_t key, 
+                                                                                const commitmanager::SnapshotDescriptor& snapshot,
+                                                                                std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn) {
+        
+        // @TODO Implementation could probably be unified with 'withReadReplication'
+
+        commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
+        
+        auto partition = mNodeRing->getNode(partitionToken);
+        LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
+
+        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
+
+        if (partition->isBootstrapping) {
+            // first attempt on the bootstrapping node
+            auto nodeSocket = mTellStoreSocket[partition->owner].get();
+            auto resp = reqFn(*nodeSocket);
+
+            // but we might have to retry the request on the previous owner
+            auto prevNodeSocket = mTellStoreSocket[partition->previousOwner].get();
+            auto retryResp = reqFn(*prevNodeSocket);
+
+            LOG_TRACE("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, mNodeRing.get());
+
+            return std::make_shared<ClusterResponse<ModificationResponse>>(resp, retryResp);
+        } else {
+            // nothing special here, we just have to wrap the response
+            auto nodeSocket = mTellStoreSocket[partition->owner].get();
+            return std::make_shared<ClusterResponse<ModificationResponse>>(reqFn(*nodeSocket));
         }
     }
 

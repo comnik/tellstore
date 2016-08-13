@@ -117,7 +117,9 @@ std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table,
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    return mProcessor.insert(mFiber, table.tableId(), key, *snapshot, tuple);
+    
+    auto clusterResp = mProcessor.insert(mFiber, table.tableId(), key, *snapshot, tuple);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, 
@@ -134,7 +136,8 @@ std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table,
                                                            AbstractTuple& tuple) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
-    return mProcessor.insert(mFiber, table.tableId(), key, snapshot, tuple);
+    auto clusterResp = mProcessor.insert(mFiber, table.tableId(), key, snapshot, tuple);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, 
@@ -152,7 +155,9 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table,
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    return mProcessor.update(mFiber, table.tableId(), key, *snapshot, tuple);
+    
+    auto clusterResp = mProcessor.update(mFiber, table.tableId(), key, *snapshot, tuple);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key,
@@ -166,7 +171,9 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table,
                                                            const commitmanager::SnapshotDescriptor& snapshot, 
                                                            AbstractTuple& tuple) {
     checkTableType(table, TableType::TRANSACTIONAL);
-    return mProcessor.update(mFiber, table.tableId(), key, snapshot, tuple);
+    
+    auto clusterResp = mProcessor.update(mFiber, table.tableId(), key, snapshot, tuple);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, 
@@ -175,21 +182,27 @@ std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table,
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
+    
+    auto clusterResp = mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, 
                                                            uint64_t key, 
                                                            const commitmanager::SnapshotDescriptor& snapshot) {
     checkTableType(table, TableType::TRANSACTIONAL);
-    return mProcessor.remove(mFiber, table.tableId(), key, snapshot);
+    
+    auto clusterResp = mProcessor.remove(mFiber, table.tableId(), key, snapshot);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::revert(const Table& table, 
                                                            uint64_t key, 
                                                            const commitmanager::SnapshotDescriptor& snapshot) {
     checkTableType(table, TableType::TRANSACTIONAL);
-    return mProcessor.revert(mFiber, table.tableId(), key, snapshot);
+    
+    auto clusterResp = mProcessor.revert(mFiber, table.tableId(), key, snapshot);
+    return clusterResp->getQuorum();
 }
 
 std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table,
