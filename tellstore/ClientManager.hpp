@@ -261,7 +261,7 @@ public:
                                                                     uint64_t key,
                                                                     const commitmanager::SnapshotDescriptor& snapshot, 
                                                                     AbstractTuple& tuple ) {
-        
+
         LOG_TRACE("UPDATE (table %1%, %2%) (%3%)", tableId, key, HashRing_t::writeHash(HashRing_t::getPartitionToken(tableId, key)));
      
         // Set the partition token. This is required because the old tuple will be
@@ -403,7 +403,7 @@ private:
                                                                                 uint64_t tableId, 
                                                                                 uint64_t key, 
                                                                                 const commitmanager::SnapshotDescriptor& snapshot,
-                                                                                std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn) {
+                                                                                std::function<std::shared_ptr<ModificationResponse> (store::ClientSocket& node)> reqFn) {
         
         // @TODO Implementation could probably be unified with 'withReadReplication'
 

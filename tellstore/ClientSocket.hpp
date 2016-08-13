@@ -105,9 +105,7 @@ public:
             bool destSucceeded = mResponse->waitForResult();
             bool srcSucceeded = mRetryResponse->waitForResult();
 
-            if (destSucceeded && srcSucceeded) {
-                return mResponse;                
-            } else if (!destSucceeded) {
+            if (!destSucceeded) {
                 auto& ec = mResponse->error();
                 LOG_INFO("Replicated write failed at new owner with %1% (%2%)", ec, ec.message());
                 return mResponse;
@@ -116,6 +114,8 @@ public:
                 LOG_INFO("Replicated write failed at old owner with %1% (%2%)", ec, ec.message());
                 return mRetryResponse;
             }
+            
+            return mResponse;
         }
     }
     
