@@ -166,7 +166,6 @@ int RowStoreRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Sna
         auto offsets = mEntry->offsetData();
         auto size = offsets[i + 1] - offsets[i];
         if (size == 0) {
-            LOG_ERROR("Not in snapshot 15");
             return (isNewest ? error::not_found : error::not_in_snapshot);
         }
 
@@ -174,7 +173,6 @@ int RowStoreRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Sna
         memcpy(dest, reinterpret_cast<const char*>(mEntry) + offsets[i], size);
         return 0;
     }
-    LOG_ERROR("Not in snapshot 16 %1%", isNewest);
     return (isNewest ? error::not_found : error::not_in_snapshot);
 }
 

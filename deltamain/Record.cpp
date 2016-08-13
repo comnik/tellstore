@@ -50,7 +50,6 @@ int InsertRecord::canUpdate(uint64_t highestVersion, const commitmanager::Snapsh
     }
 
     if (!snapshot.inReadSet(mEntry->version)) {
-        LOG_ERROR("InsertRecord::canUpdate - Not in snapshot (%1%, %2%) in %3%", snapshot.version(), snapshot.baseVersion(), mEntry->version);
         return error::not_in_snapshot;
     }
 
