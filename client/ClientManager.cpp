@@ -63,7 +63,7 @@ void ClientHandle::transferOwnership(commitmanager::Hash rangeEnd, crossbow::str
     return mProcessor.transferOwnership(mFiber, rangeEnd, host);
 }
 
-std::unique_ptr<commitmanager::ClusterState> ClientHandle::startTransaction(
+std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransaction(
         TransactionType type /* = TransactionType::READ_WRITE */) {
     return mProcessor.start(mFiber, type);
 }
@@ -267,9 +267,7 @@ BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& s
                                          uint64_t processorNum) 
     : mConfig(config),
       mService(service),
-      mIsUpdating(false),
       mCachedDirectoryVersion(0),
-      mNodeRing(new HashRing_t(config.numVirtualNodes)),
       mProcessor(service.createProcessor()),
       mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses, config.maxBatchSize),
       mProcessorNum(processorNum),
@@ -353,41 +351,32 @@ void BaseClientProcessor::transferOwnership(crossbow::infinio::Fiber& fiber,
     resp->get();
 }
 
-std::unique_ptr<commitmanager::ClusterState> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, 
+std::unique_ptr<commitmanager::SnapshotDescriptor> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, 
                                                                         TransactionType type) {
     // TODO Return a transaction future?
 
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
-    auto clusterState = startResponse->get();
+    auto snapshot = startResponse->get();
 
-    if (clusterState->directoryVersion > mCachedDirectoryVersion && !mConfig.isLocked) {
-        if (mIsUpdating.exchange(true)) {
-            LOG_INFO("Someone is already updating the configuration.");
-            // There is a already someone updating the partition information, wait till he's done
-            // while (mIsUpdating.load());
-        } else {
-            LOG_INFO("Updating directory @ %1% (cached is %2%, peers: %3%)", clusterState->directoryVersion, mCachedDirectoryVersion, clusterState->peers);
+    if (snapshot->directoryVersion > mCachedDirectoryVersion && !mConfig.isLocked) {
+        LOG_INFO("Updating directory @ %1% (cached is %2%, peers: %3%)", snapshot->directoryVersion, mCachedDirectoryVersion, snapshot->peers);
+    
+        // We are the first thread to update the partition information
+        auto endpoints = ClientConfig::parseTellStore(snapshot->peers);
+
+        // Create and load new configuration
+        ClientConfig config(mConfig);
+        config.tellStore = endpoints;
+
+        snapshot->numPeers = config.numStores();
         
-            // We are the first thread to update the partition information
-            auto endpoints = ClientConfig::parseTellStore(clusterState->peers);
+        reloadConfig(config);
 
-            // Create and load new configuration
-            ClientConfig config(mConfig);
-            config.tellStore = endpoints;
-
-            clusterState->numPeers = config.numStores();
-            
-            reloadConfig(config);
-
-            // Update thread-local routing information
-            mNodeRing.swap(clusterState->hashRing);
-            mCachedDirectoryVersion = clusterState->directoryVersion;
-            
-            mIsUpdating.store(false);
-        }
+        // Update thread-local routing information
+        mCachedDirectoryVersion = snapshot->directoryVersion;
     }
 
-    return clusterState;
+    return snapshot;
 }
 
 void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {

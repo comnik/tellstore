@@ -538,18 +538,12 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
 
     LOG_INFO("Registering with commit-manager...");
 
-    std::unique_ptr<ClusterState> clusterState;
+    std::unique_ptr<SnapshotDescriptor> snapshot;
     std::unique_ptr<ClusterMeta> clusterMeta;
-    TransactionRunner::executeBlocking(mPeersManager, [&config, &clusterState, &clusterMeta](ClientHandle& client) {
-        clusterState = std::move(client.startTransaction());
-        
-        clusterMeta = std::move(client.registerNode(
-            *clusterState->snapshot,
-            config.nodeToken, 
-            "STORAGE"
-        ));
-        
-        client.commit(*clusterState->snapshot);
+    TransactionRunner::executeBlocking(mPeersManager, [&config, &snapshot, &clusterMeta](ClientHandle& client) {
+        snapshot = std::move(client.startTransaction());
+        clusterMeta = std::move(client.registerNode(*snapshot, config.nodeToken, "STORAGE"));
+        client.commit(*snapshot);
     });
 
     // We registered successfully. This means, the commit manager should have 
@@ -568,7 +562,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service,
             std::unique_ptr<Transfer> transfer(new Transfer);
             transfer->start = range.start;
             transfer->end = range.end;
-            transfer->atVersion = clusterState->snapshot->version();
+            transfer->atVersion = snapshot->version();
 
             LOG_INFO("Registering new key transfer @ version %1%", transfer->atVersion);
             mTransfers.push_back(std::move(transfer));
@@ -622,15 +616,13 @@ void ServerManager::shutdown() {
 
     LOG_INFO("Unregistering with commit-manager...");
 
-    std::unique_ptr<ClusterState> clusterState;
+    std::unique_ptr<SnapshotDescriptor> snapshot;
     std::unique_ptr<ClusterMeta> clusterMeta;
-    TransactionRunner::executeBlocking(mPeersManager, [this, &clusterState, &clusterMeta](ClientHandle& client) {
-        clusterState = std::move(client.startTransaction());
-        
-        // clusterMeta = std::move(client.unregisterNode(*clusterState->snapshot));
-        clusterMeta = std::move(client.unregisterNode(*clusterState->snapshot, mToken));
-        
-        client.commit(*clusterState->snapshot);
+    TransactionRunner::executeBlocking(mPeersManager, [this, &snapshot, &clusterMeta](ClientHandle& client) {
+        snapshot = std::move(client.startTransaction());
+        // clusterMeta = std::move(client.unregisterNode(*snapshot));
+        clusterMeta = std::move(client.unregisterNode(*snapshot, mToken));
+        client.commit(*snapshot);
     });
 
     // We unregistered successfully. This means, the commit manager should have 
@@ -656,7 +648,7 @@ void ServerManager::shutdown() {
     mPeersManager.lockConfig(config);
 
     for (const auto& range : clusterMeta->ranges) {
-        auto tx = std::bind(&ServerManager::requestTransfer, this, range.owner, range.start, range.end, clusterState->snapshot->version(), _1);
+        auto tx = std::bind(&ServerManager::requestTransfer, this, range.owner, range.start, range.end, snapshot->version(), _1);
         mTxRunner->execute(tx);
     }
     
@@ -787,7 +779,7 @@ void ServerManager::requestTransfer(const crossbow::string& host,
 }
 
 void ServerManager::transferKeys(crossbow::string tableName, const Transfer& transfer, ClientHandle& client) {
-    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
 
     auto table = client.getTable(tableName)->get();
 
@@ -797,7 +789,7 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
         transfer.start,
         transfer.end,
         table,
-        *clusterState->snapshot,
+        *snapshot,
         *mScanMemory,
         ScanQueryType::FULL,
         SELECTION_LENGTH,
@@ -807,7 +799,7 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
     );
 
     uint64_t localTableId = 0x0u;
-    auto localTable = mStorage.getTable(tableName, localTableId);
+    mStorage.getTable(tableName, localTableId);
 
     size_t errorCount = 0x0u;
     size_t scanCount = 0x0u;
@@ -844,7 +836,7 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
         // std::exit(1);
     }
 
-    client.commit(*clusterState->snapshot);
+    client.commit(*snapshot);
 
     if (scanCount > 0 || errorCount > 0) {
         LOG_INFO("\t\t received %1% tuples in total, %2% errors", scanCount, errorCount);
@@ -852,11 +844,11 @@ void ServerManager::transferKeys(crossbow::string tableName, const Transfer& tra
 }
 
 void ServerManager::transferOwnership(Hash rangeStart, Hash rangeEnd, ClientHandle& client) {
-    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
 
     client.transferOwnership(rangeEnd, mToken);
 
-    client.commit(*clusterState->snapshot);
+    client.commit(*snapshot);
 }
 
 void ServerManager::performTransfer(const Transfer& transfer) {

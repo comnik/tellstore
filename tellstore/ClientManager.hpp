@@ -92,7 +92,7 @@ public:
 
     void transferOwnership(commitmanager::Hash rangeEnd, crossbow::string host);
 
-    std::unique_ptr<commitmanager::ClusterState> startTransaction(TransactionType type = TransactionType::READ_WRITE);
+    std::unique_ptr<commitmanager::SnapshotDescriptor> startTransaction(TransactionType type = TransactionType::READ_WRITE);
 
     void commit(const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -211,7 +211,7 @@ public:
                             commitmanager::Hash rangeEnd, 
                             crossbow::string host );
 
-    std::unique_ptr<commitmanager::ClusterState> start(crossbow::infinio::Fiber& fiber, TransactionType type);
+    std::unique_ptr<commitmanager::SnapshotDescriptor> start(crossbow::infinio::Fiber& fiber, TransactionType type);
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -347,36 +347,20 @@ protected:
 
 private:
     /**
-     * Returns the socket associated with the node that owns the given partition token.
-     */
-    store::ClientSocket* shard(commitmanager::Hash partitionToken) {
-        auto partition = mNodeRing->getNode(partitionToken);
-        LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
-
-        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
-
-        return mTellStoreSocket[partition->owner].get();
-    }
-
-    store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
-        return shard(HashRing_t::getPartitionToken(tableId, key));
-    }
-
-    /**
      * Wraps a read request with a future that replicates read requests on a bootstrapping partition
      * at the node that previously owned the key.
      */
-    std::shared_ptr<ClusterResponse<GetResponse>> withReadReplication(crossbow::infinio::Fiber& fiber, 
-                                                                   uint64_t tableId, 
-                                                                   uint64_t key, 
-                                                                   const commitmanager::SnapshotDescriptor& snapshot,
-                                                                   std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn) {
+    std::shared_ptr<ClusterResponse<GetResponse>> withReadReplication(  crossbow::infinio::Fiber& fiber, 
+                                                                        uint64_t tableId, 
+                                                                        uint64_t key, 
+                                                                        const commitmanager::SnapshotDescriptor& snapshot,
+                                                                        std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn ) {
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         
-        auto partition = mNodeRing->getNode(partitionToken);
+        auto partition = snapshot.nodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
+        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, snapshot.nodeRing.get());
 
         if (partition->isBootstrapping) {
             // first attempt on the bootstrapping node
@@ -387,7 +371,7 @@ private:
             auto prevNodeSocket = mTellStoreSocket[partition->previousOwner].get();
             auto retryResp = reqFn(*prevNodeSocket);
 
-            LOG_TRACE("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, mNodeRing.get());
+            LOG_TRACE("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, snapshot.nodeRing.get());
 
             return std::make_shared<ClusterResponse<GetResponse>>(resp, retryResp);
         } else {
@@ -411,10 +395,10 @@ private:
 
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         
-        auto partition = mNodeRing->getNode(partitionToken);
+        auto partition = snapshot.nodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
-        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, mNodeRing.get());
+        LOG_TRACE("\t -> %1% (consulted %2%)", partition->owner, snapshot.nodeRing.get());
 
         if (partition->isBootstrapping) {
             // first attempt on the bootstrapping node
@@ -425,7 +409,7 @@ private:
             auto prevNodeSocket = mTellStoreSocket[partition->previousOwner].get();
             auto retryResp = reqFn(*prevNodeSocket);
 
-            LOG_TRACE("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, mNodeRing.get());
+            LOG_TRACE("\t -> retrying at %1% (consulted %2%)", partition->previousOwner, snapshot.nodeRing.get());
 
             return std::make_shared<ClusterResponse<ModificationResponse>>(resp, retryResp);
         } else {
@@ -439,14 +423,8 @@ private:
 
     crossbow::infinio::InfinibandService& mService;
 
-    // Atomic flag indicating wether a thread is updating the local hash ring
-    std::atomic<bool> mIsUpdating;
-
     // The transaction id at which the local hash ring was last updated
     uint64_t mCachedDirectoryVersion;
-
-    // The local copy of the hash ring
-    std::unique_ptr<HashRing_t> mNodeRing;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 

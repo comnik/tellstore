@@ -135,12 +135,12 @@ ElasticClient::ElasticClient(ClientConfig& config,
         
     // Load initial routing information, so we can estimate scan memory parameters and create tables
     TransactionRunner::executeBlocking(mManager, [this, scanMemoryLength](ClientHandle& client) {
-        auto clusterState = client.startTransaction();
-        client.commit(*clusterState->snapshot);
+        auto snapshot = client.startTransaction();
+        client.commit(*snapshot);
 
         this->mScanMemory = std::move(this->mManager.allocateScanMemory(
-            clusterState->numPeers,
-            scanMemoryLength / clusterState->numPeers
+            snapshot->numPeers,
+            scanMemoryLength / snapshot->numPeers
         ));
     });
 
@@ -239,7 +239,7 @@ void ElasticClient::createSchema(ClientHandle& client) {
 void ElasticClient::populate(ClientHandle& client) {
     auto startTime = std::chrono::steady_clock::now();
 
-    auto clusterState = client.startTransaction(TransactionType::READ_WRITE);
+    auto snapshot = client.startTransaction(TransactionType::READ_WRITE);
     
     for (uint64_t key = 1; key <= mNumTuple; ++key) {
         auto table = mTables[key % mNumTables];
@@ -249,13 +249,13 @@ void ElasticClient::populate(ClientHandle& client) {
         LOG_TRACE("\tTuple %1% -> %2% (%3%)", key, table.tableName(), HashRing::writeHash(partitionKey));
         auto tuple = mTuple[key % mTuple.size()];
 
-        auto insertFuture = client.insert(table, key, *clusterState->snapshot, tuple);
+        auto insertFuture = client.insert(table, key, *snapshot, tuple);
         if (auto ec = insertFuture->error()) {
             LOG_ERROR("\tError inserting tuple [error = %1% %2%]", ec, ec.message());
         }
     }
     
-    client.commit(*clusterState->snapshot);
+    client.commit(*snapshot);
 
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
@@ -268,12 +268,12 @@ void ElasticClient::populate(ClientHandle& client) {
 void ElasticClient::verify(ClientHandle& client) {
     auto startTime = std::chrono::steady_clock::now();
     
-    auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
+    auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
     
     uint64_t tupleCount = 0;
     for (uint64_t key = 1; key <= mNumTuple; ++key) {
         Table table = mTables[key % mNumTables];
-        auto getFuture = client.get(table, key, *clusterState->snapshot);
+        auto getFuture = client.get(table, key, *snapshot);
         if (!getFuture->waitForResult()) {
             auto& ec = getFuture->error();
             LOG_ERROR("Error getting tuple %1% [error = %2% %3%]", key, ec, ec.message());
@@ -285,7 +285,7 @@ void ElasticClient::verify(ClientHandle& client) {
     }
     LOG_ASSERT(tupleCount == mNumTuple, "Not all tuples remain available");
 
-    client.commit(*clusterState->snapshot);
+    client.commit(*snapshot);
 
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
@@ -294,8 +294,8 @@ void ElasticClient::verify(ClientHandle& client) {
 
 
 // void ElasticClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {
-//     auto clusterState = client.startTransaction();
-//     LOG_INFO("\t-> Started transaction %1%", clusterState->snapshot->version());
+//     auto snapshot = client.startTransaction();
+//     LOG_INFO("\t-> Started transaction %1%", snapshot->version());
 
 //     OperationTimer insertTimer;
 //     OperationTimer getTimer;
@@ -305,7 +305,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //         Table table = mTables[key % mNumTables];
 
 //         insertTimer.start();
-//         auto insertFuture = client.insert(table, key, *clusterState->snapshot, mTuple[key % mTuple.size()]);
+//         auto insertFuture = client.insert(table, key, *snapshot, mTuple[key % mTuple.size()]);
 //         if (auto ec = insertFuture->error()) {
 //             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
 //             return;
@@ -314,7 +314,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //         LOG_TRACE("\t\tinserting tuple took %1%ns", insertDuration.count());
 
 //         getTimer.start();
-//         auto getFuture = client.get(table, key, *clusterState->snapshot);
+//         auto getFuture = client.get(table, key, *snapshot);
 //         if (!getFuture->waitForResult()) {
 //             auto& ec = getFuture->error();
 //             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
@@ -324,7 +324,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //         LOG_DEBUG("\t\t getting tuple took %1%ns", getDuration.count());
 
 //         auto tuple = getFuture->get();
-//         LOG_ASSERT(tuple->version() == clusterState->snapshot->version(), "Tuple not in the version written");
+//         LOG_ASSERT(tuple->version() == snapshot->version(), "Tuple not in the version written");
 //         LOG_ASSERT(tuple->isNewest(), "Tuple not the newest version");
 
 //         if (check) {
@@ -356,13 +356,13 @@ void ElasticClient::verify(ClientHandle& client) {
 //         }
 //     }
 
-//     client.commit(*clusterState->snapshot);
+//     client.commit(*snapshot);
 //     LOG_TRACE("\tCommited transaction");
 
 //     auto endTime = std::chrono::steady_clock::now();
 //     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
 //     LOG_INFO("\tTransaction %1% completed in %2%ms [total = %3%ms / %4%ms, average = %5%us / %6%us]",
-//              clusterState->snapshot->version(),
+//              snapshot->version(),
 //              duration.count(),
 //              std::chrono::duration_cast<std::chrono::milliseconds>(insertTimer.total()).count(),
 //              std::chrono::duration_cast<std::chrono::milliseconds>(getTimer.total()).count(),
@@ -373,8 +373,8 @@ void ElasticClient::verify(ClientHandle& client) {
 // void ElasticClient::executeScan(ClientHandle& client, float selectivity, bool check) {
 //     LOG_TRACE("Starting transaction");
 //     auto& fiber = client.fiber();
-//     auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
-//     LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", clusterState->snapshot->version(),
+//     auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+//     LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", snapshot->version(),
 //             static_cast<int>(selectivity * 100));
 
 //     Record::id_t recordField;
@@ -401,7 +401,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //     selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
 //     auto scanStartTime = std::chrono::steady_clock::now();
-//     auto scanIterator = client.scan(mTable, *clusterState->snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength,
+//     auto scanIterator = client.scan(mTable, *snapshot, *mScanMemory, ScanQueryType::FULL, selectionLength,
 //             selection.get(), 0x0u, nullptr);
 
 //     size_t scanCount = 0x0u;
@@ -456,7 +456,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //     }
 
 //     LOG_TRACE("Commit transaction");
-//     client.commit(*clusterState->snapshot);
+//     client.commit(*snapshot);
 
 //     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
 //     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
@@ -464,14 +464,14 @@ void ElasticClient::verify(ClientHandle& client) {
 //             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
 //     auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
 //     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-//             clusterState->snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+//             snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 // }
 
 // void ElasticClient::executeProjection(ClientHandle& client, float selectivity, bool check) {
 //     LOG_TRACE("Starting transaction");
 //     auto& fiber = client.fiber();
-//     auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
-//     LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", clusterState->snapshot->version(),
+//     auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+//     LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", snapshot->version(),
 //             static_cast<int>(selectivity * 100));
 
 //     Record::id_t numberField;
@@ -516,7 +516,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
 //     auto scanStartTime = std::chrono::steady_clock::now();
-//     auto scanIterator = client.scan(resultTable, *clusterState->snapshot, *mScanMemory, ScanQueryType::PROJECTION, selectionLength,
+//     auto scanIterator = client.scan(resultTable, *snapshot, *mScanMemory, ScanQueryType::PROJECTION, selectionLength,
 //             selection.get(), projectionLength, projection.get());
 
 //     size_t scanCount = 0x0u;
@@ -559,7 +559,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //     }
 
 //     LOG_TRACE("Commit transaction");
-//     client.commit(*clusterState->snapshot);
+//     client.commit(*snapshot);
 
 //     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
 //     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
@@ -567,14 +567,14 @@ void ElasticClient::verify(ClientHandle& client) {
 //             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
 //     auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
 //     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-//             clusterState->snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+//             snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 // }
 
 // void ElasticClient::executeAggregation(ClientHandle& client, float selectivity) {
 //     LOG_TRACE("Starting transaction");
 //     auto& fiber = client.fiber();
-//     auto clusterState = client.startTransaction(TransactionType::READ_ONLY);
-//     LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", clusterState->snapshot->version(),
+//     auto snapshot = client.startTransaction(TransactionType::READ_ONLY);
+//     LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", snapshot->version(),
 //             static_cast<int>(selectivity * 100));
 
 //     Record::id_t recordField;
@@ -621,7 +621,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
 //     auto scanStartTime = std::chrono::steady_clock::now();
-//     auto scanIterator = client.scan(resultTable, *clusterState->snapshot, *mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
+//     auto scanIterator = client.scan(resultTable, *snapshot, *mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
 //             selection.get(), aggregationLength, aggregation.get());
 
 //     size_t scanCount = 0x0u;
@@ -654,11 +654,11 @@ void ElasticClient::verify(ClientHandle& client) {
 //         return;
 //     }
 
-//     LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%, cnt = %5%]", clusterState->snapshot->version(), totalSum,
+//     LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%, cnt = %5%]", snapshot->version(), totalSum,
 //             totalMin, totalMax, totalCnt);
 
 //     LOG_TRACE("Commit transaction");
-//     client.commit(*clusterState->snapshot);
+//     client.commit(*snapshot);
 
 //     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
 //     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
@@ -666,7 +666,7 @@ void ElasticClient::verify(ClientHandle& client) {
 //             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
 //     auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
 //     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
-//             clusterState->snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+//             snapshot->version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 // }
 
 } // anonymous namespace
