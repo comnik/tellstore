@@ -69,9 +69,9 @@ class Record;
  */
 class ClientHandle : crossbow::non_copyable, crossbow::non_movable {
 public:
-    static std::unique_ptr<commitmanager::SnapshotDescriptor> createNonTransactionalSnapshot(uint64_t baseVersion);
+    std::unique_ptr<commitmanager::SnapshotDescriptor> createNonTransactionalSnapshot(uint64_t baseVersion);
 
-    static std::unique_ptr<commitmanager::SnapshotDescriptor> createAnalyticalSnapshot(uint64_t lowestActiveVersion,
+    std::unique_ptr<commitmanager::SnapshotDescriptor> createAnalyticalSnapshot(uint64_t lowestActiveVersion,
             uint64_t baseVersion);
 
     ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber)
@@ -187,6 +187,10 @@ public:
 private:
     BaseClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
+
+    // we have to keep a recently obtained snapshot around,
+    // so that non-transactional snapshots can be generated from it's nodeRing
+    std::atomic<HashRing_t*> mOldPartitioning;
 };
 
 /**

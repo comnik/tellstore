@@ -39,13 +39,19 @@ void checkTableType(const Table& table, TableType type) {
 std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createNonTransactionalSnapshot(uint64_t baseVersion) {
     auto version = (baseVersion == std::numeric_limits<uint64_t>::max() ? baseVersion : baseVersion + 1);
     commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
-    return commitmanager::SnapshotDescriptor::create(0x0u, baseVersion, version,
-            reinterpret_cast<const char*>(&descriptor));
+    
+    auto snapshot = commitmanager::SnapshotDescriptor::create(0x0u, baseVersion, version, reinterpret_cast<const char*>(&descriptor));
+    snapshot->nodeRing = std::unique_ptr<commitmanager::HashRing>(mOldPartitioning);
+
+    return snapshot;
 }
 
 std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createAnalyticalSnapshot(uint64_t lowestActiveVersion,
         uint64_t baseVersion) {
-    return commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
+    auto snapshot = commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
+    snapshot->nodeRing = std::unique_ptr<commitmanager::HashRing>(mOldPartitioning);
+    
+    return snapshot;    
 }
 
 std::unique_ptr<commitmanager::ClusterMeta> ClientHandle::registerNode(const commitmanager::SnapshotDescriptor& snapshot,
@@ -65,7 +71,11 @@ void ClientHandle::transferOwnership(commitmanager::Hash rangeEnd, crossbow::str
 
 std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransaction(
         TransactionType type /* = TransactionType::READ_WRITE */) {
-    return mProcessor.start(mFiber, type);
+    auto snapshot = mProcessor.start(mFiber, type);
+
+    mOldPartitioning.store(new HashRing_t(*snapshot->nodeRing), std::memory_order_relaxed);
+
+    return snapshot;
 }
 
 void ClientHandle::commit(const commitmanager::SnapshotDescriptor& snapshot) {
@@ -117,7 +127,7 @@ std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table,
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    
+
     auto clusterResp = mProcessor.insert(mFiber, table.tableId(), key, *snapshot, tuple);
     return clusterResp->getQuorum();
 }
@@ -155,7 +165,7 @@ std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table,
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    
+
     auto clusterResp = mProcessor.update(mFiber, table.tableId(), key, *snapshot, tuple);
     return clusterResp->getQuorum();
 }
@@ -182,7 +192,7 @@ std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table,
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = createNonTransactionalSnapshot(version);
-    
+
     auto clusterResp = mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
     return clusterResp->getQuorum();
 }
