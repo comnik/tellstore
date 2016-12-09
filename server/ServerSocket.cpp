@@ -392,10 +392,9 @@ void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, cr
 }
 
 void ServerSocket::handleKeyTransfer(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
-    // Theser are not used yet
-    auto rangeStart = request.read<commitmanager::Hash>();
-    auto rangeEnd = request.read<commitmanager::Hash>();
-    auto version = request.read<uint64_t>();
+    request.read<commitmanager::Hash>(); // rangeStart
+    request.read<commitmanager::Hash>(); // rangeEnd
+    request.read<uint64_t>(); // version
 
     handleScan(messageId, request);
 }
@@ -722,7 +721,9 @@ std::unique_ptr<char[]> createKeyTransferQuery(Table& table, Hash rangeStart, Ha
     // Selection on the partition key
     Record::id_t keyField;
     bool hasPartKeyField = table.record().idOf("__partition_token", keyField);
-    LOG_ASSERT(hasPartKeyField == true, "Schema must have a partition key field.");
+    if (hasPartKeyField == false) {
+        LOG_ERROR("Schema must have a partition key field.");
+    }
 
     selectionWriter.write<uint16_t>(keyField);      // -1 is the fixed id of the tell key field
     selectionWriter.write<uint16_t>(0x2u);          // number of predicates
