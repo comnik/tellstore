@@ -41,7 +41,9 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createNonTransa
     commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
     
     auto snapshot = commitmanager::SnapshotDescriptor::create(0x0u, baseVersion, version, reinterpret_cast<const char*>(&descriptor));
-    snapshot->nodeRing = std::unique_ptr<commitmanager::HashRing>(mOldPartitioning);
+    snapshot->nodeRing = std::unique_ptr<commitmanager::HashRing>(new commitmanager::HashRing(1));
+    snapshot->nodeRing->insertNode("0.0.0.0:7243");
+    snapshot->nodeRing->insertNode("0.0.0.0:7244");
 
     return snapshot;
 }
@@ -49,8 +51,10 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createNonTransa
 std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createAnalyticalSnapshot(uint64_t lowestActiveVersion,
         uint64_t baseVersion) {
     auto snapshot = commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
-    snapshot->nodeRing = std::unique_ptr<commitmanager::HashRing>(mOldPartitioning);
-    
+    snapshot->nodeRing = std::unique_ptr<commitmanager::HashRing>(new commitmanager::HashRing(1));
+    snapshot->nodeRing->insertNode("0.0.0.0:7243");
+    snapshot->nodeRing->insertNode("0.0.0.0:7244");
+
     return snapshot;    
 }
 
@@ -73,7 +77,7 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransactio
         TransactionType type /* = TransactionType::READ_WRITE */) {
     auto snapshot = mProcessor.start(mFiber, type);
 
-    mOldPartitioning.store(new HashRing_t(*snapshot->nodeRing), std::memory_order_relaxed);
+    // mOldPartitioning.store(new HashRing_t(*snapshot->nodeRing), std::memory_order_relaxed);
 
     return snapshot;
 }

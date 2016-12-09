@@ -190,7 +190,7 @@ private:
 
     // we have to keep a recently obtained snapshot around,
     // so that non-transactional snapshots can be generated from it's nodeRing
-    std::atomic<HashRing_t*> mOldPartitioning;
+    // std::atomic<HashRing_t*> mOldPartitioning;
 };
 
 /**
@@ -361,6 +361,8 @@ private:
                                                                         std::function<std::shared_ptr<GetResponse> (store::ClientSocket& node)> reqFn ) {
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         
+        LOG_ASSERT(snapshot.nodeRing != nullptr, "No node ring given");
+
         auto partition = snapshot.nodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
@@ -399,6 +401,8 @@ private:
 
         commitmanager::Hash partitionToken = HashRing_t::getPartitionToken(tableId, key);
         
+        LOG_ASSERT(snapshot.nodeRing != nullptr, "No node ring given");
+
         auto partition = snapshot.nodeRing->getNode(partitionToken);
         LOG_ASSERT(partition != nullptr, "No routing information available. Have you forgotten startTransaction()?");
 
